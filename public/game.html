@@ -6,8 +6,20 @@
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Подключение к игре...</div>
+</div>
+
 <div class="game-page" id="gamePage">
-  <div class="logo" style="font-size:1.4rem">ДОТА&#8209;<span>ШПИОН</span></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:600px;margin-bottom:10px">
+    <div class="logo" style="font-size:1.4rem">ДОТА&#8209;<span>ШПИОН</span></div>
+    <div class="connection-status disconnected" id="connectionStatus">
+      <span class="connection-dot disconnected"></span>
+      <span id="connectionText">Подключение...</span>
+    </div>
+  </div>
 
   <!-- My role card -->
   <div id="tapCard" style="cursor:pointer;user-select:none" onclick="revealRole()">
@@ -26,6 +38,19 @@
     <div style="display:flex;gap:8px" id="timerControls">
       <button class="btn btn-secondary" id="btnStartStop" onclick="toggleTimer()">▶ Старт</button>
       <button class="btn btn-secondary" onclick="resetTimer()">↺ Сброс</button>
+    </div>
+  </div>
+
+  <!-- Spy notes (visible only to spy) -->
+  <div class="card" id="spyNotesSection" style="max-width:520px;display:none">
+    <h2>Заметки шпиона — отмечай героев которых отсек</h2>
+    <div style="font-size:.8rem;color:#8b949e;margin-bottom:12px">
+      Нажимай на героев чтобы отметить их как "не подозреваемых". Сохраняется в браузере.
+    </div>
+    <div class="hero-grid" id="spyNotesGrid"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-secondary" onclick="clearSpyNotes()">🗑️ Очистить все</button>
+      <button class="btn btn-secondary" onclick="toggleCrossedMode()" id="crossedModeBtn">✅ Режим зачёркивания</button>
     </div>
   </div>
 
@@ -74,14 +99,25 @@
   </div>
 </div>
 
+<script src="heroes.js"></script>
 <script>
-const data = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
-if (!data) { location.href = 'index.html'; }
+// Try to get game data from sessionStorage or wait for rejoin
+let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
+let role, hero, location: locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer;
 
-const { role, hero, location: locHero, time, players, myId } = data;
+if (gameData) {
+  ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer } = gameData);
+} else {
+  // Wait for rejoin message
+  console.log('Waiting for rejoin data from server...');
+}
 let usedVote = false;
 let voteActive = false;
 let iHaveVoted = false;
+
+// Spy notes
+const crossedHeroes = new Set(initialSpyNotes);
+let crossedMode = false;
 
 // ── Players vote list
 function renderVotePlayers() {
@@ -105,26 +141,225 @@ function renderVotePlayers() {
 }
 renderVotePlayers();
 
+// ── Initialize spy notes if spy
+if (role === 'spy') {
+  document.getElementById('spyNotesSection').style.display = '';
+  initSpyNotes();
+}
+
 // ── Timer
 let totalSec = time * 60;
 let remaining = totalSec;
 let running = false;
 let iv = null;
-const isHost = (myId === players[0].id);
+const isHost = hostId && (myId === hostId); // Correct host detection using server-provided hostId
+
+// ── Spy notes functions
+function initSpyNotes() {
+  const grid = document.getElementById('spyNotesGrid');
+  grid.innerHTML = '';
+  
+  HEROES.forEach(h => {
+    const tile = document.createElement('div');
+    tile.className = 'hero-tile' + (crossedHeroes.has(h.name) ? ' crossed' : '') + (crossedMode ? ' crossed-mode' : '');
+    tile.title = crossedHeroes.has(h.name) ? `${h.name} — зачёркнут` : h.name;
+    tile.innerHTML = `<img src="${h.img}" loading="lazy" alt="${h.name}"><div class="h-name">${h.name}</div>`;
+    
+    tile.addEventListener('click', () => toggleCrossedHero(h.name, tile));
+    grid.appendChild(tile);
+  });
+}
+
+let saveSpyNotesTimeout = null;
+const SAVE_DEBOUNCE_TIME = 1000; // 1 second
+
+function toggleCrossedHero(heroName, tile) {
+  if (crossedHeroes.has(heroName)) {
+    crossedHeroes.delete(heroName);
+    tile.classList.remove('crossed');
+    tile.title = heroName;
+  } else {
+    crossedHeroes.add(heroName);
+    tile.classList.add('crossed');
+    tile.title = `${heroName} — зачёркнут`;
+  }
+  
+  // Update crossed mode visual
+  if (crossedMode) {
+    tile.classList.add('crossed-mode');
+  } else {
+    tile.classList.remove('crossed-mode');
+  }
+  
+  // Debounced save to server
+  clearTimeout(saveSpyNotesTimeout);
+  saveSpyNotesTimeout = setTimeout(() => {
+    saveSpyNotes();
+  }, SAVE_DEBOUNCE_TIME);
+}
+
+function toggleCrossedMode() {
+  crossedMode = !crossedMode;
+  const btn = document.getElementById('crossedModeBtn');
+  btn.textContent = crossedMode ? '❌ Режим обычный' : '✅ Режим зачёркивания';
+  
+  const tiles = document.querySelectorAll('#spyNotesGrid .hero-tile');
+  tiles.forEach(tile => {
+    if (crossedMode) {
+      tile.classList.add('crossed-mode');
+    } else {
+      tile.classList.remove('crossed-mode');
+    }
+  });
+}
+
+function clearSpyNotes() {
+  if (!confirm('Очистить все заметки? Это удалит все зачёркивания.')) return;
+  crossedHeroes.clear();
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'spy_notes_clear' }));
+  }
+  initSpyNotes();
+}
+
+function saveSpyNotes() {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ 
+      type: 'spy_notes_update', 
+      crossedHeroes: [...crossedHeroes] 
+    }));
+  }
+}
+
+function handle(msg) {
+  console.log('WebSocket message:', msg.type, msg);
+  
+  if (msg.type === 'rejoined') {
+    // Handle reconnection with full game state
+    if (msg.gameData) {
+      sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));
+      location.reload(); // Reload to apply new data
+      return;
+    } else if (msg.roomState && !msg.roomState.started) {
+      location.href = 'lobby.html';
+      return;
+    }
+  }
+  
+  if (msg.type === 'timer') { 
+    remaining = msg.remaining; 
+    renderTimer(); 
+  }
+  if (msg.type === 'room_state') {
+    if (!msg.started) { 
+      location.href = 'lobby.html'; 
+    } else {
+      // Update timer if available
+      if (msg.timer && msg.timer.remaining) {
+        remaining = msg.timer.remaining;
+        renderTimer();
+      }
+    }
+  }
+  if (msg.type === 'vote_started')  onVoteStarted(msg);
+  if (msg.type === 'vote_update')   onVoteUpdate(msg);
+  if (msg.type === 'vote_result')   onVoteResult(msg);
+  if (msg.type === 'error')         { 
+    document.getElementById('voteErr').textContent = msg.text; 
+    setTimeout(()=>document.getElementById('voteErr').textContent='',3000); 
+  }
+  if (msg.type === 'spy_notes_saved') { console.log('Spy notes saved to server'); }
+  if (msg.type === 'spy_notes_cleared') { console.log('Spy notes cleared on server'); }
+}
 
 let ws;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+function updateConnectionStatus(status, text) {
+  const statusEl = document.getElementById('connectionStatus');
+  const textEl = document.getElementById('connectionText');
+  const dotEl = statusEl.querySelector('.connection-dot');
+  
+  statusEl.className = `connection-status ${status}`;
+  dotEl.className = `connection-dot ${status}`;
+  textEl.textContent = text;
+  
+  // Hide loading overlay when connected
+  if (status === 'connected') {
+    document.getElementById('loadingOverlay').style.display = 'none';
+    document.getElementById('gamePage').style.display = 'flex';
+  }
+}
+
 function connect() {
-  ws = new WebSocket(`ws://${location.host}`);
+  updateConnectionStatus('connecting', 'Подключение...');
+  
+  const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
+  ws = new WebSocket(WS_URL);
+  
+  // Set timeout for connection
+  const connectionTimeout = setTimeout(() => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      ws.close();
+      updateConnectionStatus('disconnected', 'Таймаут подключения');
+    }
+  }, 10000);
+  
   ws.onopen = () => {
+    clearTimeout(connectionTimeout);
+    reconnectAttempts = 0;
+    updateConnectionStatus('connected', 'Подключено');
+    
     const code = sessionStorage.getItem('dotaspy_code');
     const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
     const playerId = sessionStorage.getItem('dotaspy_ws_id');
     ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId }));
+    
+    // After rejoining, sync spy notes with server
+    if (role === 'spy' && crossedHeroes.size > 0) {
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ 
+            type: 'spy_notes_update', 
+            crossedHeroes: [...crossedHeroes] 
+          }));
+        }
+      }, 500);
+    }
   };
+  
   ws.onmessage = e => handle(JSON.parse(e.data));
-  ws.onclose = () => setTimeout(connect, 2000);
+  
+  ws.onerror = () => {
+    updateConnectionStatus('disconnected', 'Ошибка соединения');
+  };
+  
+  ws.onclose = () => {
+    clearTimeout(connectionTimeout);
+    updateConnectionStatus('disconnected', 'Переподключение...');
+    
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+      setTimeout(connect, delay);
+    } else {
+      updateConnectionStatus('disconnected', 'Не удалось подключиться');
+      if (confirm('Соединение потеряно. Хотите перезагрузить страницу?')) {
+        location.reload();
+      }
+    }
+  };
 }
-connect();
+
+// Initialize connection after page loads
+window.addEventListener('load', () => {
+  if (!gameData) {
+    document.getElementById('loadingOverlay').style.display = 'flex';
+    document.getElementById('gamePage').style.display = 'none';
+  }
+  connect();
+});
 
 function handle(msg) {
   if (msg.type === 'timer') { remaining = msg.remaining; renderTimer(); }
@@ -228,8 +463,8 @@ function onVoteUpdate(msg) {
 function renderVoteBar(votes, total) {
   const yes = Object.values(votes).filter(Boolean).length;
   const no  = Object.values(votes).length - yes;
-  const yPct = Math.round(yes / total * 100);
-  const nPct = Math.round(no  / total * 100);
+  const yPct = total > 0 ? Math.round(yes / total * 100) : 0;
+  const nPct = total > 0 ? Math.round(no  / total * 100) : 0;
   document.getElementById('voteBarYes').style.width = yPct + '%';
   document.getElementById('voteBarNo').style.width  = nPct + '%';
   document.getElementById('voteCounts').textContent = `За: ${yes} | Против: ${no} | Всего: ${total}`;
@@ -264,7 +499,8 @@ function onVoteResult(msg) {
   } else {
     emoji = '🕵️';
     title = 'Шпион победил!';
-    sub   = `${msg.targetName} был мирным! Невинного выгнали — шпион выиграл.\nШпионы: ${msg.spyIds.map(id => players.find(p=>p.id===id)?.name).join(', ')}`;
+    const spyNames = msg.spyIds ? msg.spyIds.map(id => players.find(p=>p.id===id)?.name).join(', ') : 'неизвестно';
+    sub   = `${msg.targetName} был мирным! Невинного выгнали — шпион выиграл.\nШпионы: ${spyNames}`;
   }
 
   document.getElementById('resultEmoji').textContent = emoji;

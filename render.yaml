@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: dota-spy
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: PORT
+        value: 3000
+    healthCheckPath: /
+    autoDeploy: true

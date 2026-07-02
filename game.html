@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Дота-Шпион — Игра</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="game-wrap">
+
+  <div class="logo" style="font-size:1.6rem">ДОТА&#8209;<span>ШПИОН</span></div>
+
+  <!-- Timer -->
+  <div class="timer-bar">
+    <div>
+      <div class="timer-label">Оставшееся время</div>
+      <div id="timerDisplay">00:00</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto">
+      <button class="btn-secondary" id="btnStartStop" onclick="toggleTimer()">▶ Старт</button>
+    </div>
+  </div>
+
+  <!-- Location (visible to host / everyone after reveal) -->
+  <div class="loc-reveal" id="locPanel">
+    <img id="locImg" src="" alt="" />
+    <div class="loc-info">
+      <h3 id="locName"></h3>
+      <p>Все игроки (кроме шпиона) знают этого персонажа</p>
+    </div>
+  </div>
+
+  <!-- Players grid -->
+  <div class="players-grid" id="playersGrid"></div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn-secondary" onclick="revealAll()">👁 Открыть всех</button>
+    <button class="btn-secondary" onclick="hideAll()">🙈 Скрыть всех</button>
+    <button class="btn-primary" onclick="window.location.href='index.html'"
+            style="padding:10px 22px;font-size:.9rem">🔄 Новая игра</button>
+  </div>
+
+</div>
+
+<script src="locations.js"></script>
+<script src="heroes.js"></script>
+<script>
+const data = JSON.parse(sessionStorage.getItem('dota_spy_game') || 'null');
+if (!data) { window.location.href = 'index.html'; }
+
+const { players, location, assigned, time } = data;
+
+// Location panel
+document.getElementById('locImg').src = location.img;
+document.getElementById('locName').textContent = location.name;
+
+// Build player cards
+const grid = document.getElementById('playersGrid');
+assigned.forEach((p, i) => {
+  const card = document.createElement('div');
+  card.className = 'player-card';
+  card.id = `player-${i}`;
+  card.innerHTML = `
+    <div class="p-num">Игрок ${i + 1}</div>
+    <div class="p-role-wrap" id="wrap-${i}">
+      <div class="p-cover">🎴</div>
+      <div class="tap-hint">Нажми чтобы посмотреть</div>
+    </div>`;
+  card.addEventListener('click', () => toggleCard(i));
+  grid.appendChild(card);
+});
+
+function buildRevealedContent(p) {
+  if (p.role === 'spy') {
+    return `<div style="font-size:2.5rem">🕵️</div>
+            <div class="hero-name" style="color:#c84b31;font-size:1rem">ТЫ ШПИОН</div>
+            <span class="role-badge spy">ШПИОН</span>
+            <div style="font-size:0.75rem;color:#8b949e;margin-top:4px">Угадай локацию!</div>`;
+  }
+  return `<img class="hero-img" src="${p.hero.img}" alt="${p.hero.name}" />
+          <div class="hero-name">${p.hero.name}</div>
+          <span class="role-badge civilian">МИРНЫЙ</span>
+          <div style="font-size:0.75rem;color:#8b949e;margin-top:4px">🎮 ${location.name}</div>`;
+}
+
+function toggleCard(i) {
+  const wrap = document.getElementById(`wrap-${i}`);
+  const card = document.getElementById(`player-${i}`);
+  const isRevealed = card.classList.contains('revealed');
+  if (isRevealed) {
+    card.classList.remove('revealed');
+    wrap.innerHTML = `<div class="p-cover">🎴</div><div class="tap-hint">Нажми чтобы посмотреть</div>`;
+  } else {
+    card.classList.add('revealed');
+    wrap.innerHTML = buildRevealedContent(assigned[i]);
+  }
+}
+
+function revealAll() {
+  assigned.forEach((_, i) => {
+    const card = document.getElementById(`player-${i}`);
+    if (!card.classList.contains('revealed')) toggleCard(i);
+  });
+}
+
+function hideAll() {
+  assigned.forEach((_, i) => {
+    const card = document.getElementById(`player-${i}`);
+    if (card.classList.contains('revealed')) toggleCard(i);
+  });
+}
+
+// Timer
+let totalSeconds = time * 60;
+let remaining = totalSeconds;
+let interval = null;
+let running = false;
+
+function fmt(s) {
+  const m = String(Math.floor(s / 60)).padStart(2, '0');
+  const sec = String(s % 60).padStart(2, '0');
+  return `${m}:${sec}`;
+}
+
+document.getElementById('timerDisplay').textContent = fmt(remaining);
+
+function toggleTimer() {
+  if (running) {
+    clearInterval(interval);
+    running = false;
+    document.getElementById('btnStartStop').textContent = '▶ Старт';
+  } else {
+    if (remaining === 0) remaining = totalSeconds;
+    running = true;
+    document.getElementById('btnStartStop').textContent = '⏸ Пауза';
+    interval = setInterval(() => {
+      remaining--;
+      document.getElementById('timerDisplay').textContent = fmt(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        running = false;
+        document.getElementById('btnStartStop').textContent = '▶ Старт';
+        document.getElementById('timerDisplay').style.color = '#c84b31';
+        document.getElementById('timerDisplay').textContent = 'ВРЕМЯ!';
+      } else if (remaining <= 30) {
+        document.getElementById('timerDisplay').style.color = '#c84b31';
+      }
+    }, 1000);
+  }
+}
+</script>
+</body>
+</html>

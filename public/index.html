@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Дота-Шпион</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="page">
+  <div class="logo">ДОТА&#8209;<span>ШПИОН</span></div>
+
+  <div class="card">
+    <div>
+      <label>Твоё имя</label>
+      <input type="text" id="nameInput" placeholder="Введи имя" maxlength="20"/>
+    </div>
+
+    <button class="btn btn-primary" onclick="createRoom()">🏠 Создать комнату</button>
+
+    <div class="divider">или</div>
+
+    <div>
+      <label>Код комнаты</label>
+      <input type="text" id="codeInput" placeholder="XXXX" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-weight:700"/>
+    </div>
+    <button class="btn btn-secondary" onclick="joinRoom()">🚪 Войти в комнату</button>
+
+    <div class="error-msg" id="errMsg"></div>
+  </div>
+</div>
+
+<script>
+  const WS_URL = `ws://${location.host}`;
+  let ws;
+
+  function connect(onOpen) {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = onOpen;
+    ws.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'error') { document.getElementById('errMsg').textContent = msg.text; return; }
+      if (msg.type === 'created' || msg.type === 'joined') {
+        sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
+        sessionStorage.setItem('dotaspy_code', msg.code);
+        window._ws = ws;
+        location.href = 'lobby.html';
+      }
+    };
+    ws.onerror = () => { document.getElementById('errMsg').textContent = 'Ошибка подключения'; };
+  }
+
+  function createRoom() {
+    const name = document.getElementById('nameInput').value.trim() || 'Хост';
+    sessionStorage.setItem('dotaspy_name', name);
+    connect(() => ws.send(JSON.stringify({ type: 'create', name })));
+  }
+
+  function joinRoom() {
+    const name = document.getElementById('nameInput').value.trim() || 'Игрок';
+    const code = document.getElementById('codeInput').value.trim().toUpperCase();
+    if (!code) { document.getElementById('errMsg').textContent = 'Введи код комнаты'; return; }
+    sessionStorage.setItem('dotaspy_name', name);
+    connect(() => ws.send(JSON.stringify({ type: 'join', name, code })));
+  }
+</script>
+</body>
+</html>

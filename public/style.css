@@ -1,0 +1,148 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e0e0e0; min-height: 100vh; }
+
+.logo { font-size: 2rem; font-weight: 800; color: #c84b31; text-shadow: 0 0 20px #c84b3180; letter-spacing: 2px; }
+.logo span { color: #e8a838; }
+
+.page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 20px; padding: 24px; }
+
+.card {
+  background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+  padding: 24px 28px; width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px;
+}
+.card h2 { font-size: 1rem; color: #8b949e; }
+
+label { font-size: 0.82rem; color: #8b949e; display: block; margin-bottom: 5px; }
+
+input[type=text], input[type=number] {
+  width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+  color: #e0e0e0; padding: 10px 14px; font-size: 1rem; outline: none;
+  transition: border-color .2s;
+}
+input[type=text]:focus, input[type=number]:focus { border-color: #c84b31; }
+
+input[type=range] { width: 100%; accent-color: #c84b31; }
+.range-row { display: flex; align-items: center; gap: 10px; }
+.range-val { min-width: 24px; text-align: right; font-weight: 700; color: #e8a838; }
+
+.btn { border: none; border-radius: 10px; padding: 12px 22px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: opacity .2s; }
+.btn-primary { background: linear-gradient(135deg, #c84b31, #8b1a0a); color: #fff; width: 100%; font-size: 1.05rem; letter-spacing: 1px; }
+.btn-primary:hover { opacity: .85; }
+.btn-secondary { background: #21262d; color: #e0e0e0; border: 1px solid #30363d; }
+.btn-secondary:hover { background: #30363d; }
+.btn-danger { background: #6e1a1a; color: #fff; }
+.btn-danger:hover { opacity: .85; }
+
+.divider { display: flex; align-items: center; gap: 10px; color: #8b949e; font-size: .85rem; }
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #30363d; }
+
+/* lobby */
+.players-list { display: flex; flex-direction: column; gap: 8px; }
+.player-row {
+  display: flex; align-items: center; gap: 10px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px;
+}
+.player-row .p-name { flex: 1; font-weight: 600; }
+.badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
+.badge-host { background: #e8a838; color: #000; }
+.badge-ready { background: #238636; color: #fff; }
+.badge-waiting { background: #30363d; color: #8b949e; }
+
+.room-code { font-size: 2rem; font-weight: 900; color: #e8a838; letter-spacing: 6px; text-align: center; }
+.room-hint { font-size: .8rem; color: #8b949e; text-align: center; }
+
+/* hero grid */
+.hero-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 8px; max-height: 280px; overflow-y: auto; padding-right: 4px;
+}
+.hero-grid::-webkit-scrollbar { width: 4px; }
+.hero-grid::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+.hero-tile {
+  position: relative; border-radius: 8px; overflow: hidden;
+  cursor: pointer; border: 2px solid transparent; transition: border-color .15s, transform .15s; aspect-ratio: 1;
+}
+.hero-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero-tile .h-name {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,.8));
+  font-size: .55rem; font-weight: 600; padding: 4px 2px 2px; text-align: center; line-height: 1.2;
+}
+.hero-tile.disabled { opacity: .3; }
+.hero-tile.disabled::after { content: '✕'; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-60%); font-size: 1.4rem; color: #c84b31; }
+
+/* game screen */
+.game-page { display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 24px 16px; gap: 20px; }
+
+.role-card {
+  background: #161b22; border: 2px solid #30363d; border-radius: 16px;
+  width: 100%; max-width: 360px; overflow: hidden; text-align: center;
+}
+.role-card.spy-card { border-color: #c84b31; }
+.role-card.civilian-card { border-color: #238636; }
+
+.role-card .rc-top { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.role-card img.hero-avatar { width: 110px; height: 110px; border-radius: 50%; object-fit: cover; border: 3px solid #c84b31; }
+.role-card .rc-name { font-size: 1.3rem; font-weight: 800; }
+.role-card .rc-badge { font-size: .85rem; padding: 4px 16px; border-radius: 20px; font-weight: 700; }
+.rc-badge.spy { background: #c84b31; color: #fff; }
+.rc-badge.civilian { background: #238636; color: #fff; }
+.role-card .rc-hint { font-size: .78rem; color: #8b949e; padding: 0 16px 16px; }
+
+/* timer */
+.timer-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px 32px;
+}
+.timer-display { font-size: 2.8rem; font-weight: 900; color: #e8a838; letter-spacing: 3px; }
+.timer-display.red { color: #c84b31; }
+
+/* players mini list */
+.mini-players { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 600px; }
+.mini-p { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 6px 14px; font-size: .8rem; }
+.mini-p.me { border-color: #e8a838; color: #e8a838; font-weight: 700; }
+
+.controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+.error-msg { color: #c84b31; font-size: .85rem; min-height: 18px; text-align: center; }
+.hidden { display: none !important; }
+
+/* ── VOTE PLAYERS ── */
+.vote-players {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+}
+.vote-player-btn {
+  background: #21262d; color: #e0e0e0; border: 1px solid #30363d;
+  border-radius: 8px; padding: 8px 18px; font-size: .85rem; font-weight: 600;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.vote-player-btn:hover:not(:disabled) { background: #c84b31; border-color: #c84b31; color: #fff; }
+.vote-player-btn:disabled { opacity: .4; cursor: not-allowed; }
+.vote-player-btn.used { opacity: .4; cursor: not-allowed; }
+.vote-player-btn.self-badge {
+  background: #0d1117; border-color: #e8a838; color: #e8a838;
+  cursor: default; font-style: italic;
+}
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+  padding: 16px;
+}
+.modal {
+  background: #161b22; border: 1px solid #30363d; border-radius: 16px;
+  padding: 28px 28px 24px; max-width: 380px; width: 100%;
+  text-align: center; display: flex; flex-direction: column; gap: 10px;
+}
+.modal-title { font-size: 1.4rem; font-weight: 800; }
+.modal-sub   { font-size: .85rem; color: #8b949e; white-space: pre-line; }
+
+.vote-bar-wrap {
+  display: flex; height: 10px; border-radius: 6px; overflow: hidden;
+  background: #30363d; margin: 4px 0;
+}
+.vote-bar-yes { background: #238636; transition: width .3s; height: 100%; }
+.vote-bar-no  { background: #c84b31; transition: width .3s; height: 100%; }
+.vote-counts  { font-size: .8rem; color: #8b949e; }
+.vote-btns    { display: flex; gap: 10px; justify-content: center; }

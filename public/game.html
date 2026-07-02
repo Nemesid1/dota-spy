@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Игра — Дота-Шпион</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="game-page" id="gamePage">
+  <div class="logo" style="font-size:1.4rem">ДОТА&#8209;<span>ШПИОН</span></div>
+
+  <!-- My role card -->
+  <div id="tapCard" style="cursor:pointer;user-select:none" onclick="revealRole()">
+    <div class="role-card" id="roleCard" style="max-width:340px">
+      <div class="rc-top" style="padding:40px 20px">
+        <div style="font-size:3rem">🎴</div>
+        <div style="color:#8b949e;font-size:.9rem">Нажми чтобы посмотреть свою роль</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timer -->
+  <div class="timer-wrap">
+    <div style="font-size:.75rem;color:#8b949e">Оставшееся время</div>
+    <div class="timer-display" id="timerDisplay">--:--</div>
+    <div style="display:flex;gap:8px" id="timerControls">
+      <button class="btn btn-secondary" id="btnStartStop" onclick="toggleTimer()">▶ Старт</button>
+      <button class="btn btn-secondary" onclick="resetTimer()">↺ Сброс</button>
+    </div>
+  </div>
+
+  <!-- Players + vote buttons -->
+  <div style="width:100%;max-width:600px">
+    <div style="font-size:.75rem;color:#8b949e;margin-bottom:8px;text-align:center">
+      Игроки — нажми чтобы начать голосование за кик
+    </div>
+    <div class="vote-players" id="votePlayers"></div>
+    <div class="error-msg" id="voteErr"></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn btn-secondary" onclick="newGame()">🔄 Новая игра</button>
+  </div>
+</div>
+
+<!-- ── VOTE MODAL ── -->
+<div class="modal-overlay hidden" id="voteModal">
+  <div class="modal">
+    <div class="modal-title" id="voteTitle">Голосование</div>
+    <div class="modal-sub" id="voteSub"></div>
+    <div class="vote-bar-wrap">
+      <div class="vote-bar-yes" id="voteBarYes"></div>
+      <div class="vote-bar-no"  id="voteBarNo"></div>
+    </div>
+    <div class="vote-counts" id="voteCounts"></div>
+    <div class="vote-btns" id="voteBtns">
+      <button class="btn btn-primary" onclick="castVote(true)">✅ За кик</button>
+      <button class="btn btn-danger"  onclick="castVote(false)">❌ Против</button>
+    </div>
+    <div style="font-size:.78rem;color:#8b949e;margin-top:8px" id="voteWaiting">Ждём остальных...</div>
+  </div>
+</div>
+
+<!-- ── RESULT OVERLAY ── -->
+<div class="modal-overlay hidden" id="resultOverlay">
+  <div class="modal">
+    <div style="font-size:3rem" id="resultEmoji">🏆</div>
+    <div class="modal-title" id="resultTitle"></div>
+    <div class="modal-sub" id="resultSub"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:center">
+      <button class="btn btn-primary" onclick="newGame()">🔄 Новая игра</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const data = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
+if (!data) { location.href = 'index.html'; }
+
+const { role, hero, location: locHero, time, players, myId } = data;
+let usedVote = false;
+let voteActive = false;
+let iHaveVoted = false;
+
+// ── Players vote list
+function renderVotePlayers() {
+  const vp = document.getElementById('votePlayers');
+  vp.innerHTML = '';
+  players.forEach(p => {
+    if (p.id === myId) return; // can't vote against yourself
+    const btn = document.createElement('button');
+    btn.className = 'vote-player-btn' + (usedVote ? ' used' : '');
+    btn.id = 'vpbtn-' + p.id;
+    btn.textContent = p.name;
+    btn.disabled = usedVote || voteActive;
+    btn.onclick = () => startVote(p.id, p.name);
+    vp.appendChild(btn);
+  });
+  // self badge
+  const self = document.createElement('div');
+  self.className = 'vote-player-btn self-badge';
+  self.textContent = (players.find(p=>p.id===myId)?.name || '') + ' (ты)';
+  vp.appendChild(self);
+}
+renderVotePlayers();
+
+// ── Timer
+let totalSec = time * 60;
+let remaining = totalSec;
+let running = false;
+let iv = null;
+const isHost = (myId === players[0].id);
+
+let ws;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => {
+    const code = sessionStorage.getItem('dotaspy_code');
+    const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
+    const playerId = sessionStorage.getItem('dotaspy_ws_id');
+    ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId }));
+  };
+  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+
+function handle(msg) {
+  if (msg.type === 'timer') { remaining = msg.remaining; renderTimer(); }
+  if (msg.type === 'room_state' && !msg.started) { location.href = 'lobby.html'; }
+  if (msg.type === 'vote_started')  onVoteStarted(msg);
+  if (msg.type === 'vote_update')   onVoteUpdate(msg);
+  if (msg.type === 'vote_result')   onVoteResult(msg);
+  if (msg.type === 'error')         { document.getElementById('voteErr').textContent = msg.text; setTimeout(()=>document.getElementById('voteErr').textContent='',3000); }
+}
+
+if (!isHost) document.getElementById('timerControls').style.display = 'none';
+
+function fmt(s) { return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
+function renderTimer() {
+  const el = document.getElementById('timerDisplay');
+  el.textContent = remaining > 0 ? fmt(remaining) : 'ВРЕМЯ!';
+  el.className = 'timer-display' + (remaining <= 30 ? ' red' : '');
+}
+renderTimer();
+
+function toggleTimer() {
+  if (running) {
+    clearInterval(iv); running = false;
+    document.getElementById('btnStartStop').textContent = '▶ Старт';
+  } else {
+    if (remaining <= 0) remaining = totalSec;
+    running = true;
+    document.getElementById('btnStartStop').textContent = '⏸ Пауза';
+    iv = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      renderTimer();
+      ws.send(JSON.stringify({ type: 'timer', remaining }));
+      if (remaining === 0) { clearInterval(iv); running = false; document.getElementById('btnStartStop').textContent = '▶ Старт'; }
+    }, 1000);
+  }
+}
+function resetTimer() {
+  clearInterval(iv); running = false; remaining = totalSec; renderTimer();
+  ws.send(JSON.stringify({ type: 'timer', remaining }));
+  document.getElementById('btnStartStop').textContent = '▶ Старт';
+}
+
+// ── Role reveal
+let revealed = false;
+function revealRole() {
+  if (revealed) return;
+  revealed = true;
+  const card = document.getElementById('roleCard');
+  if (role === 'spy') {
+    card.className = 'role-card spy-card';
+    card.innerHTML = `
+      <div class="rc-top">
+        <div style="font-size:3rem">🕵️</div>
+        <div class="rc-name" style="color:#c84b31">ТЫ ШПИОН</div>
+        <span class="rc-badge spy">ШПИОН</span>
+      </div>
+      <div class="rc-hint">Угадай персонажа которого знают остальные.<br>Не раскрывай себя при ответах на вопросы!</div>`;
+  } else {
+    card.className = 'role-card civilian-card';
+    card.innerHTML = `
+      <div class="rc-top">
+        <img class="hero-avatar" src="${locHero.img}" alt="${locHero.name}"/>
+        <div class="rc-name">${locHero.name}</div>
+        <span class="rc-badge civilian">МИРНЫЙ</span>
+      </div>
+      <div class="rc-hint">Это загаданный персонаж. Задавай вопросы и найди шпиона,<br>который его не знает!</div>`;
+  }
+  document.getElementById('tapCard').style.cursor = 'default';
+}
+
+// ── Voting
+function startVote(targetId, targetName) {
+  if (usedVote) { document.getElementById('voteErr').textContent = 'Ты уже использовал своё голосование!'; return; }
+  if (!confirm(`Начать голосование за кик "${targetName}"?`)) return;
+  ws.send(JSON.stringify({ type: 'vote_start', targetId }));
+}
+
+function onVoteStarted(msg) {
+  voteActive = true;
+  iHaveVoted = (msg.votes[myId] !== undefined);
+  document.getElementById('voteTitle').textContent = `Голосование за кик`;
+  document.getElementById('voteSub').textContent = `${msg.initiatorName} хочет выгнать ${msg.targetName}`;
+  renderVoteBar(msg.votes, msg.total);
+  const isInitiator = msg.initiatorId === myId;
+  document.getElementById('voteBtns').style.display = isInitiator ? 'none' : '';
+  document.getElementById('voteWaiting').style.display = isInitiator ? '' : 'none';
+  document.getElementById('voteModal').classList.remove('hidden');
+  renderVotePlayers(); // disable buttons
+}
+
+function onVoteUpdate(msg) {
+  iHaveVoted = (msg.votes[myId] !== undefined);
+  renderVoteBar(msg.votes, msg.total);
+  if (iHaveVoted) {
+    document.getElementById('voteBtns').style.display = 'none';
+    document.getElementById('voteWaiting').style.display = '';
+    document.getElementById('voteWaiting').textContent = 'Твой голос учтён. Ждём остальных...';
+  }
+}
+
+function renderVoteBar(votes, total) {
+  const yes = Object.values(votes).filter(Boolean).length;
+  const no  = Object.values(votes).length - yes;
+  const yPct = Math.round(yes / total * 100);
+  const nPct = Math.round(no  / total * 100);
+  document.getElementById('voteBarYes').style.width = yPct + '%';
+  document.getElementById('voteBarNo').style.width  = nPct + '%';
+  document.getElementById('voteCounts').textContent = `За: ${yes} | Против: ${no} | Всего: ${total}`;
+}
+
+function castVote(yes) {
+  ws.send(JSON.stringify({ type: 'vote_cast', yes }));
+  document.getElementById('voteBtns').style.display = 'none';
+  document.getElementById('voteWaiting').style.display = '';
+  document.getElementById('voteWaiting').textContent = 'Твой голос учтён. Ждём остальных...';
+}
+
+function onVoteResult(msg) {
+  voteActive = false;
+  document.getElementById('voteModal').classList.add('hidden');
+
+  // mark vote used for self if I was initiator
+  if (!usedVote) {
+    // server tracks it; reflect locally if we just voted
+  }
+
+  let emoji, title, sub;
+
+  if (!msg.kicked) {
+    emoji = '🛡️';
+    title = `${msg.targetName} остаётся!`;
+    sub   = `Большинство проголосовало ПРОТИВ кика. Игра продолжается.`;
+  } else if (msg.winner === 'civilians') {
+    emoji = '🎉';
+    title = 'Мирные победили!';
+    sub   = `${msg.targetName} был шпионом! Шпион разоблачён и изгнан.`;
+  } else {
+    emoji = '🕵️';
+    title = 'Шпион победил!';
+    sub   = `${msg.targetName} был мирным! Невинного выгнали — шпион выиграл.\nШпионы: ${msg.spyIds.map(id => players.find(p=>p.id===id)?.name).join(', ')}`;
+  }
+
+  document.getElementById('resultEmoji').textContent = emoji;
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultSub').textContent   = sub;
+  document.getElementById('resultOverlay').classList.remove('hidden');
+}
+
+function newGame() {
+  ws.send(JSON.stringify({ type: 'restart' }));
+  location.href = 'lobby.html';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Дота-Шпион</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="lobby">
+  <div class="logo">ДОТА&#8209;<span>ШПИОН</span></div>
+
+  <div class="card">
+    <h2>Настройки игры</h2>
+
+    <div>
+      <label>Количество игроков</label>
+      <div class="range-row">
+        <input type="range" id="playerCount" min="3" max="12" value="6"
+               oninput="document.getElementById('pcVal').textContent=this.value" />
+        <span class="range-val" id="pcVal">6</span>
+      </div>
+    </div>
+
+    <div>
+      <label>Шпионов</label>
+      <div class="range-row">
+        <input type="range" id="spyCount" min="1" max="4" value="1"
+               oninput="document.getElementById('scVal').textContent=this.value" />
+        <span class="range-val" id="scVal">1</span>
+      </div>
+    </div>
+
+    <div>
+      <label>Время раунда (минут)</label>
+      <div class="range-row">
+        <input type="range" id="roundTime" min="4" max="20" value="8"
+               oninput="document.getElementById('rtVal').textContent=this.value" />
+        <span class="range-val" id="rtVal">8</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Персонажи — нажмите чтобы исключить</h2>
+    <div class="loc-grid" id="locGrid"></div>
+  </div>
+
+  <button class="btn-primary" onclick="startGame()">▶ НАЧАТЬ ИГРУ</button>
+</div>
+
+<script src="locations.js"></script>
+<script src="heroes.js"></script>
+<script>
+  // render location tiles
+  const locGrid = document.getElementById('locGrid');
+  const disabledLocs = new Set();
+
+  LOCATIONS.forEach((loc, i) => {
+    const tile = document.createElement('div');
+    tile.className = 'loc-tile';
+    tile.innerHTML = `<img src="${loc.img}" alt="${loc.name}" loading="lazy">
+                      <div class="loc-name">${loc.name}</div>`;
+    tile.addEventListener('click', () => {
+      if (disabledLocs.has(i)) { disabledLocs.delete(i); tile.classList.remove('disabled'); }
+      else { disabledLocs.add(i); tile.classList.add('disabled'); }
+    });
+    locGrid.appendChild(tile);
+  });
+
+  function startGame() {
+    const players = parseInt(document.getElementById('playerCount').value);
+    const spies   = parseInt(document.getElementById('spyCount').value);
+    const time    = parseInt(document.getElementById('roundTime').value);
+
+    const available = LOCATIONS.filter((_, i) => !disabledLocs.has(i));
+    if (available.length === 0) { alert('Включите хотя бы одну локацию!'); return; }
+
+    const location = available[Math.floor(Math.random() * available.length)];
+
+    // assign roles
+    const roles = Array(players).fill('civilian');
+    const spyIndices = [];
+    while (spyIndices.length < Math.min(spies, players - 1)) {
+      const idx = Math.floor(Math.random() * players);
+      if (!spyIndices.includes(idx)) spyIndices.push(idx);
+    }
+    spyIndices.forEach(i => roles[i] = 'spy');
+
+    // assign heroes (random, no repeats)
+    const shuffled = [...HEROES].sort(() => Math.random() - .5);
+    const assigned = roles.map((role, i) => ({
+      role,
+      hero: role === 'spy' ? null : shuffled[i % shuffled.length],
+    }));
+
+    sessionStorage.setItem('dota_spy_game', JSON.stringify({ players, location, assigned, time }));
+    window.location.href = 'game.html';
+  }
+</script>
+</body>
+</html>

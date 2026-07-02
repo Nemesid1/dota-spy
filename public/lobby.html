@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Лобби — Дота-Шпион</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="page" id="lobbyPage">
+  <div class="logo" style="font-size:1.5rem">ДОТА&#8209;<span>ШПИОН</span></div>
+
+  <div class="card" style="max-width:520px">
+    <div class="room-code" id="roomCode">····</div>
+    <div class="room-hint">Скажи этот код друзьям — они заходят на этот же сайт</div>
+  </div>
+
+  <!-- Host settings -->
+  <div class="card" id="hostSettings" style="max-width:520px">
+    <h2>Настройки (только для хоста)</h2>
+    <div>
+      <label>Количество игроков</label>
+      <div class="range-row">
+        <input type="range" id="playerRange" min="2" max="12" value="4"
+               oninput="document.getElementById('playerVal').textContent=this.value;sendSettings()"/>
+        <span class="range-val" id="playerVal">4</span>
+      </div>
+    </div>
+    <div>
+      <label>Шпионов</label>
+      <div class="range-row">
+        <input type="range" id="spyRange" min="1" max="4" value="1"
+               oninput="document.getElementById('spyVal').textContent=this.value;sendSettings()"/>
+        <span class="range-val" id="spyVal">1</span>
+      </div>
+    </div>
+    <div>
+      <label>Время раунда (минут)</label>
+      <div class="range-row">
+        <input type="range" id="timeRange" min="4" max="20" value="8"
+               oninput="document.getElementById('timeVal').textContent=this.value;sendSettings()"/>
+        <span class="range-val" id="timeVal">8</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Players -->
+  <div class="card" style="max-width:520px">
+    <h2>Игроки <span id="playersCount" style="color:#e8a838"></span></h2>
+    <div class="players-list" id="playersList"></div>
+  </div>
+
+  <!-- Hero picker (host only) -->
+  <div class="card" id="heroPicker" style="max-width:520px">
+    <h2>Персонажи — нажми чтобы исключить</h2>
+    <div class="hero-grid" id="heroGrid"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="controls" style="max-width:520px;width:100%">
+    <button class="btn btn-secondary" id="btnReady" onclick="toggleReady()">✅ Готов</button>
+    <button class="btn btn-primary" id="btnStart" onclick="startGame()">▶ Начать игру</button>
+  </div>
+  <div class="error-msg" id="errMsg"></div>
+</div>
+
+<script src="heroes.js"></script>
+<script>
+  const myId   = sessionStorage.getItem('dotaspy_ws_id');
+  const myCode = sessionStorage.getItem('dotaspy_code');
+  let isHost   = false;
+  let ws;
+  const disabledHeroes = new Set();
+
+  // --- Hero grid
+  const heroGrid = document.getElementById('heroGrid');
+  HEROES.forEach(h => {
+    const tile = document.createElement('div');
+    tile.className = 'hero-tile';
+    tile.title = h.name;
+    tile.innerHTML = `<img src="${h.img}" loading="lazy" alt="${h.name}"><div class="h-name">${h.name}</div>`;
+    tile.addEventListener('click', () => {
+      if (disabledHeroes.has(h.name)) disabledHeroes.delete(h.name);
+      else disabledHeroes.add(h.name);
+      tile.classList.toggle('disabled');
+    });
+    heroGrid.appendChild(tile);
+  });
+
+  // --- WS reconnect from sessionStorage
+  function connect() {
+    ws = new WebSocket(`ws://${location.host}`);
+    ws.onopen = () => {
+      const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
+      const playerId = sessionStorage.getItem('dotaspy_ws_id');
+      // rejoin — not a new join, just restore connection
+      ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId }));
+    };
+    ws.onmessage = e => handle(JSON.parse(e.data));
+    ws.onerror   = () => { document.getElementById('errMsg').textContent = 'Потеряно соединение'; };
+    ws.onclose   = () => { setTimeout(connect, 2000); };
+  }
+  connect();
+
+  function handle(msg) {
+    if (msg.type === 'error')       { document.getElementById('errMsg').textContent = msg.text; return; }
+    if (msg.type === 'joined')      { sessionStorage.setItem('dotaspy_ws_id', msg.playerId); return; }
+    if (msg.type === 'room_state')  { renderLobby(msg); return; }
+    if (msg.type === 'game_start')  {
+      sessionStorage.setItem('dotaspy_game', JSON.stringify(msg));
+      location.href = 'game.html';
+    }
+  }
+
+  function renderLobby(state) {
+    document.getElementById('roomCode').textContent = state.code;
+    isHost = state.hostId === myId;
+
+    document.getElementById('hostSettings').style.display = isHost ? '' : 'none';
+    document.getElementById('heroPicker').style.display   = isHost ? '' : 'none';
+    document.getElementById('btnStart').style.display     = isHost ? '' : 'none';
+    document.getElementById('btnReady').style.display     = isHost ? 'none' : '';
+
+    if (isHost && state.settings) {
+      document.getElementById('playerRange').value = state.settings.maxPlayers || 4;
+      document.getElementById('playerVal').textContent = state.settings.maxPlayers || 4;
+      document.getElementById('spyRange').value = state.settings.spies;
+      document.getElementById('spyVal').textContent = state.settings.spies;
+      document.getElementById('timeRange').value = state.settings.time;
+      document.getElementById('timeVal').textContent = state.settings.time;
+    }
+
+    const filled = state.players.length;
+    const max = state.settings?.maxPlayers || '?';
+    document.getElementById('playersCount').textContent = `(${filled} / ${max})`;
+
+    const list = document.getElementById('playersList');
+    list.innerHTML = '';
+    state.players.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'player-row';
+      const badges = [];
+      if (p.id === state.hostId) badges.push('<span class="badge badge-host">Хост</span>');
+      if (p.id === myId)         badges.push('<span class="badge" style="background:#30363d;color:#e8a838">Ты</span>');
+      if (p.id !== state.hostId) badges.push(p.ready
+        ? '<span class="badge badge-ready">Готов</span>'
+        : '<span class="badge badge-waiting">Ждёт</span>');
+      row.innerHTML = `<span class="p-name">${p.name}</span>${badges.join('')}`;
+      list.appendChild(row);
+    });
+  }
+
+  function sendSettings() {
+    ws.send(JSON.stringify({ type: 'settings', settings: {
+      maxPlayers: parseInt(document.getElementById('playerRange').value),
+      spies: parseInt(document.getElementById('spyRange').value),
+      time:  parseInt(document.getElementById('timeRange').value),
+    }}));
+  }
+
+  function toggleReady() {
+    ws.send(JSON.stringify({ type: 'ready' }));
+  }
+
+  function startGame() {
+    ws.send(JSON.stringify({ type: 'start', heroes: HEROES, disabledHeroes: [...disabledHeroes] }));
+  }
+</script>
+</body>
+</html>

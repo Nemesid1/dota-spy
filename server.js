@@ -3,8 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
+<<<<<<< HEAD
 // Use environment variable for port (for hosting) or default to 3000
 const PORT = process.env.PORT || 3000;
+=======
+>>>>>>> e6fc562965258f2099d2e648121afa886ea308db
 const PUBLIC = path.join(__dirname, 'public');
 
 const MIME = {
@@ -166,6 +169,7 @@ wss.on('connection', ws => {
       if (existing) {
         // restore ws reference
         existing.ws = ws;
+	clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
         
@@ -369,15 +373,40 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     if (!myRoom || !rooms[myRoom]) return;
     const room = rooms[myRoom];
-    room.players = room.players.filter(p => p.id !== myId);
-    if (room.players.length === 0) { delete rooms[myRoom]; return; }
-    // pass host if host left
+    
+    // Не удаляем игрока из списка! Просто обнуляем его вебсокет.
+    const player = room.players.find(p => p.id === myId);
+    if (player) player.ws = null;
+    
+    // Считаем, кто остался на связи
+    const activePlayers = room.players.filter(p => p.ws !== null);
+    
+    // Если никого на связи нет, НЕ удаляем комнату сразу.
+    // Даем 15 секунд на перезагрузку страницы (rejoin).
+    if (activePlayers.length === 0) {
+      clearTimeout(room._emptyTimer);
+      room._emptyTimer = setTimeout(() => {
+        // Если через 15 секунд так и никого нет — тогда удаляем
+        if (rooms[myRoom] && rooms[myRoom].players.filter(p => p.ws !== null).length === 0) {
+          delete rooms[myRoom];
+        }
+      }, 15000);
+      return;
+    }
+    
+    // Передача хоста, если хост вышел (но остались другие)
     if (room.hostId === myId) {
+<<<<<<< HEAD
       room.hostId = room.players[0].id;
       if (room.players[0]) room.players[0].ready = true;
+=======
+      room.hostId = activePlayers[0].id;
+      activePlayers[0].ready = true;
+>>>>>>> e6fc562965258f2099d2e648121afa886ea308db
     }
     broadcast(myRoom, roomState(myRoom));
   });
 });
 
-server.listen(PORT, () => console.log(`Дота-Шпион запущен: http://localhost:${PORT}`));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => console.log(`Дота-Шпион запущен на порту ${PORT}`));

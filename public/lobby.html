@@ -6,8 +6,20 @@
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay" style="display:none">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Подключение к лобби...</div>
+</div>
+
 <div class="page" id="lobbyPage">
-  <div class="logo" style="font-size:1.5rem">ДОТА&#8209;<span>ШПИОН</span></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:520px;margin-bottom:10px">
+    <div class="logo" style="font-size:1.5rem">ДОТА&#8209;<span>ШПИОН</span></div>
+    <div class="connection-status disconnected" id="connectionStatus">
+      <span class="connection-dot disconnected"></span>
+      <span id="connectionText">Подключение...</span>
+    </div>
+  </div>
 
   <div class="card" style="max-width:520px">
     <div class="room-code" id="roomCode">····</div>
@@ -86,20 +98,80 @@
     heroGrid.appendChild(tile);
   });
 
+  // --- Connection management
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 10;
+  
+  function updateConnectionStatus(status, text) {
+    const statusEl = document.getElementById('connectionStatus');
+    const textEl = document.getElementById('connectionText');
+    const dotEl = statusEl.querySelector('.connection-dot');
+    
+    statusEl.className = `connection-status ${status}`;
+    dotEl.className = `connection-dot ${status}`;
+    textEl.textContent = text;
+    
+    // Hide loading overlay when connected
+    if (status === 'connected') {
+      document.getElementById('loadingOverlay').style.display = 'none';
+      document.getElementById('lobbyPage').style.display = 'flex';
+    }
+  }
+  
   // --- WS reconnect from sessionStorage
   function connect() {
-    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`);
+    updateConnectionStatus('connecting', 'Подключение к лобби...');
+    document.getElementById('loadingOverlay').style.display = 'flex';
+    document.getElementById('lobbyPage').style.display = 'none';
+    
+    const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
+    ws = new WebSocket(WS_URL);
+    
+    // Set timeout for connection
+    const connectionTimeout = setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        ws.close();
+        updateConnectionStatus('disconnected', 'Таймаут подключения');
+      }
+    }, 10000);
+    
     ws.onopen = () => {
+    ws.onopen = () => {
+      clearTimeout(connectionTimeout);
+      reconnectAttempts = 0;
+      updateConnectionStatus('connected', 'Подключено к лобби');
+      
       const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
       // rejoin — not a new join, just restore connection
       ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId }));
     };
     ws.onmessage = e => handle(JSON.parse(e.data));
-    ws.onerror   = () => { document.getElementById('errMsg').textContent = 'Потеряно соединение'; };
-    ws.onclose   = () => { setTimeout(connect, 2000); };
+    ws.onerror   = () => { 
+      updateConnectionStatus('disconnected', 'Ошибка соединения');
+      document.getElementById('errMsg').textContent = 'Потеряно соединение'; 
+    };
+    ws.onclose   = () => {
+      clearTimeout(connectionTimeout);
+      updateConnectionStatus('disconnected', 'Переподключение...');
+      
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+        setTimeout(connect, delay);
+      } else {
+        updateConnectionStatus('disconnected', 'Не удалось подключиться');
+        if (confirm('Соединение потеряно. Хотите перезагрузить страницу?')) {
+          location.reload();
+        }
+      }
+    };
   }
-  connect();
+  
+  // Initialize connection
+  window.addEventListener('load', () => {
+    connect();
+  });
 
   function handle(msg) {
     if (msg.type === 'error')       { document.getElementById('errMsg').textContent = msg.text; return; }

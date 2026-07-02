@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
-const PORT = 3000;
+// Use environment variable for port (for hosting) or default to 3000
+const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
 
 const MIME = {
@@ -24,9 +25,10 @@ const server = http.createServer((req, res) => {
 });
 
 // ── ROOMS ─────────────────────────────────────────────────────────────────────
-// rooms: { code -> { hostId, players:[{id,name,ready,role,usedVote}], settings, started, vote } }
+// rooms: { code -> { hostId, players:[{id,name,ready,role,usedVote}], settings, started, vote, timer } }
 // vote: { initiatorId, targetId, targetName, votes:{id->bool}, resolved }
 const rooms = {};
+const spyNotes = {}; // roomCode -> playerId -> Set of crossed heroes
 const clients = {}; // ws -> { roomCode, playerId }
 
 function makeCode() {
@@ -40,6 +42,24 @@ function broadcast(roomCode, msg) {
     if (p.ws && p.ws.readyState === 1) p.ws.send(data);
   });
 }
+
+// Spy notes functions
+function getSpyNotes(roomCode, playerId) {
+  if (!spyNotes[roomCode]) spyNotes[roomCode] = {};
+  if (!spyNotes[roomCode][playerId]) spyNotes[roomCode][playerId] = new Set();
+  return Array.from(spyNotes[roomCode][playerId]);
+}
+
+function updateSpyNotes(roomCode, playerId, crossedHeroes) {
+  if (!spyNotes[roomCode]) spyNotes[roomCode] = {};
+  spyNotes[roomCode][playerId] = new Set(crossedHeroes);
+}
+
+function clearSpyNotes(roomCode, playerId) {
+  if (spyNotes[roomCode] && spyNotes[roomCode][playerId]) {
+    spyNotes[roomCode][playerId] = new Set();
+  }
+}
 function roomState(roomCode) {
   const room = rooms[roomCode];
   return {
@@ -49,6 +69,13 @@ function roomState(roomCode) {
     players: room.players.map(p => ({ id: p.id, name: p.name, ready: p.ready })),
     settings: room.settings,
     started: room.started,
+    vote: room.vote,
+    timer: room.timer,
+    // Add timer sync info if game started
+    gameInfo: room.started ? {
+      roles: room.players.map(p => ({ id: p.id, role: p.role })),
+      usedVotes: room.players.map(p => ({ id: p.id, usedVote: p.usedVote }))
+    } : null
   };
 }
 
@@ -141,7 +168,27 @@ wss.on('connection', ws => {
         existing.ws = ws;
         myRoom = code;
         myId   = existing.id;
-        ws.send(JSON.stringify({ type: 'joined', code, playerId: myId }));
+        
+        // Send full state to reconnecting player
+        const response = {
+          type: 'rejoined',
+          code,
+          playerId: myId,
+          roomState: roomState(code),
+          // If game started, send game data
+          gameData: room.started ? {
+            role: existing.role,
+            hero: existing.role === 'spy' ? null : (room.players.find(p => p.role !== 'spy')?.hero || null),
+            location: room.players.find(p => p.role === 'civilian')?.location || null,
+            time: room.settings.time,
+            players: room.players.map(x => ({ id: x.id, name: x.name })),
+            myId: existing.id,
+            hostId: room.hostId,
+            spyNotes: existing.role === 'spy' ? getSpyNotes(code, existing.id) : [],
+            initialTimer: room.timer?.remaining || room.settings.time * 60
+          } : null
+        };
+        ws.send(JSON.stringify(response));
         broadcast(code, roomState(code));
       } else {
         // player not found — treat as fresh join
@@ -178,8 +225,23 @@ wss.on('connection', ws => {
       const room = rooms[myRoom];
       if (!room || room.hostId !== myId) return;
 
+      // Check minimum players
+      if (room.players.length < 3) {
+        ws.send(JSON.stringify({ type: 'error', text: 'Нужно минимум 3 игрока для начала игры!' }));
+        return;
+      }
+      
+      // Check maximum spies
+      const maxSpies = Math.min(room.players.length - 1, 3);
+      if (room.settings.spies > maxSpies) {
+        room.settings.spies = maxSpies;
+        broadcast(myRoom, roomState(myRoom));
+        ws.send(JSON.stringify({ type: 'error', text: `Количество шпионов уменьшено до ${maxSpies} (максимум для ${room.players.length} игроков)` }));
+        return;
+      }
+      
       // pick a random hero from disabled list sent by host
-      const { heroes, disabledHeroes = [] } = msg;
+      const { heroes = [], disabledHeroes = [] } = msg;
       const available = heroes.filter(h => !disabledHeroes.includes(h.name));
       if (available.length === 0) {
         ws.send(JSON.stringify({ type: 'error', text: 'Нет доступных персонажей!' }));
@@ -199,6 +261,7 @@ wss.on('connection', ws => {
       let hi = 0;
 
       room.started = true;
+      room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
       room.players.forEach(p => {
         const isSpy = spyIds.has(p.id);
         p.role = isSpy ? 'spy' : 'civilian';
@@ -206,11 +269,14 @@ wss.on('connection', ws => {
         const assignment = {
           type: 'game_start',
           role: isSpy ? 'spy' : 'civilian',
-          hero: isSpy ? null : heroPool[hi++ % heroPool.length],
+          hero: isSpy ? null : (heroPool.length > 0 ? heroPool[hi++ % heroPool.length] : null),
           location: hero,
           time: room.settings.time,
           players: room.players.map(x => ({ id: x.id, name: x.name })),
           myId: p.id,
+          spyNotes: isSpy ? getSpyNotes(myRoom, p.id) : [],
+          hostId: room.hostId, // Add hostId for correct host detection
+          initialTimer: room.timer.remaining
         };
         if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(assignment));
       });
@@ -219,6 +285,10 @@ wss.on('connection', ws => {
 
     // ── timer sync (host broadcasts to all)
     else if (msg.type === 'timer') {
+      const room = rooms[myRoom];
+      if (room) {
+        room.timer = { remaining: msg.remaining, updatedAt: Date.now() };
+      }
       broadcast(myRoom, { type: 'timer', remaining: msg.remaining });
     }
 
@@ -266,6 +336,26 @@ wss.on('connection', ws => {
       checkVoteResult(myRoom);
     }
 
+    // ── spy notes update
+    else if (msg.type === 'spy_notes_update') {
+      const room = rooms[myRoom];
+      if (!room || !room.started) return;
+      const player = room.players.find(p => p.id === myId);
+      if (!player || player.role !== 'spy') return;
+      updateSpyNotes(myRoom, myId, msg.crossedHeroes || []);
+      ws.send(JSON.stringify({ type: 'spy_notes_saved' }));
+    }
+
+    // ── spy notes clear
+    else if (msg.type === 'spy_notes_clear') {
+      const room = rooms[myRoom];
+      if (!room || !room.started) return;
+      const player = room.players.find(p => p.id === myId);
+      if (!player || player.role !== 'spy') return;
+      clearSpyNotes(myRoom, myId);
+      ws.send(JSON.stringify({ type: 'spy_notes_cleared' }));
+    }
+
     // ── restart
     else if (msg.type === 'restart') {
       const room = rooms[myRoom];
@@ -284,7 +374,7 @@ wss.on('connection', ws => {
     // pass host if host left
     if (room.hostId === myId) {
       room.hostId = room.players[0].id;
-      room.players[0].ready = true;
+      if (room.players[0]) room.players[0].ready = true;
     }
     broadcast(myRoom, roomState(myRoom));
   });

@@ -71,6 +71,41 @@ input[type=range] { width: 100%; accent-color: #c84b31; }
 .hero-tile.disabled { opacity: .3; }
 .hero-tile.disabled::after { content: '✕'; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-60%); font-size: 1.4rem; color: #c84b31; }
 
+/* Spy notes styles */
+.hero-tile.crossed {
+  position: relative;
+  opacity: 0.7;
+}
+.hero-tile.crossed::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, transparent 45%, #c84b31 50%, transparent 55%);
+  background-size: 4px 4px;
+  z-index: 1;
+}
+.hero-tile.crossed::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(-135deg, transparent 45%, #c84b31 50%, transparent 55%);
+  background-size: 4px 4px;
+  z-index: 1;
+}
+.hero-tile.crossed img {
+  filter: grayscale(80%);
+}
+.hero-tile.crossed-mode {
+  border-color: #c84b31 !important;
+  box-shadow: 0 0 0 2px #c84b31;
+}
+
 /* game screen */
 .game-page { display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 24px 16px; gap: 20px; }
 
@@ -146,3 +181,61 @@ input[type=range] { width: 100%; accent-color: #c84b31; }
 .vote-bar-no  { background: #c84b31; transition: width .3s; height: 100%; }
 .vote-counts  { font-size: .8rem; color: #8b949e; }
 .vote-btns    { display: flex; gap: 10px; justify-content: center; }
+
+/* Connection status */
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .75rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #0d1117;
+  border: 1px solid;
+  margin-bottom: 10px;
+}
+.connection-status.connected { border-color: #238636; color: #238636; }
+.connection-status.connecting { border-color: #e8a838; color: #e8a838; }
+.connection-status.disconnected { border-color: #c84b31; color: #c84b31; }
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.connection-dot.connected { background: #238636; }
+.connection-dot.connecting { background: #e8a838; animation: pulse 1.5s infinite; }
+.connection-dot.disconnected { background: #c84b31; }
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+/* Loading overlay */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  gap: 16px;
+}
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #30363d;
+  border-top-color: #c84b31;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.loading-text {
+  color: #e0e0e0;
+  font-size: .9rem;
+}

@@ -88,7 +88,7 @@
 
   // --- WS reconnect from sessionStorage
   function connect() {
-    ws = new WebSocket(`ws://${location.host}`);
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`);
     ws.onopen = () => {
       const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');

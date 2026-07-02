@@ -138,6 +138,7 @@ wss.on('connection', ws => {
       if (existing) {
         // restore ws reference
         existing.ws = ws;
+	clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
         ws.send(JSON.stringify({ type: 'joined', code, playerId: myId }));

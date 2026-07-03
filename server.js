@@ -121,18 +121,59 @@ function checkVoteResult(roomCode) {
   });
 }
 
-const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000; // 10 мин — пустая комната
-const PLAYER_DISCONNECT_GRACE = 30000; // 30 сек на переподключение (перезагрузка страницы)
+const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000;
+const RECONNECT_GRACE = 12000; // 12 сек — только для F5 / перезагрузки, слот сразу свободен
 
 function activePlayers(room) {
   return room.players.filter(p => p.ws && p.ws.readyState === 1);
 }
 
-function cancelDisconnectTimer(player) {
-  if (player && player._disconnectTimer) {
-    clearTimeout(player._disconnectTimer);
-    player._disconnectTimer = null;
+function cleanGrace(room) {
+  if (!room.reconnectGrace) return;
+  const now = Date.now();
+  for (const [id, g] of Object.entries(room.reconnectGrace)) {
+    if (g.expiresAt <= now) delete room.reconnectGrace[id];
   }
+}
+
+function transferHostIfNeeded(room) {
+  if (!room.players.some(p => p.id === room.hostId)) {
+    const online = activePlayers(room);
+    room.hostId = (online[0] || room.players[0])?.id;
+  }
+  if (room.hostId) {
+    const host = room.players.find(p => p.id === room.hostId);
+    if (host) host.ready = true;
+  }
+}
+
+function removePlayerImmediate(roomCode, playerId, { allowRejoin = false } = {}) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  const player = room.players.find(p => p.id === playerId);
+  if (!player || player.ws) return;
+
+  if (allowRejoin && !room.started) {
+    if (!room.reconnectGrace) room.reconnectGrace = {};
+    room.reconnectGrace[playerId] = {
+      name: player.name,
+      ready: player.ready,
+      wasHost: room.hostId === playerId,
+      expiresAt: Date.now() + RECONNECT_GRACE,
+    };
+  }
+
+  const wasHost = room.hostId === playerId;
+  room.players = room.players.filter(p => p.id !== playerId);
+
+  if (room.players.length === 0) {
+    delete rooms[roomCode];
+    delete spyNotes[roomCode];
+    return;
+  }
+
+  if (wasHost) transferHostIfNeeded(room);
+  broadcast(roomCode, roomState(roomCode));
 }
 
 function buildGameAssignment(room, player, roomCode) {
@@ -160,42 +201,7 @@ function sendGameStart(room, player) {
 }
 
 function removePlayer(roomCode, playerId) {
-  const room = rooms[roomCode];
-  if (!room) return;
-  const player = room.players.find(p => p.id === playerId);
-  if (!player || player.ws) return;
-
-  room.players = room.players.filter(p => p.id !== playerId);
-  cancelDisconnectTimer(player);
-
-  if (room.players.length === 0) {
-    delete rooms[roomCode];
-    delete spyNotes[roomCode];
-    return;
-  }
-
-  if (room.hostId === playerId) {
-    const online = activePlayers(room);
-    room.hostId = (online[0] || room.players[0]).id;
-    if (room.hostId) {
-      const newHost = room.players.find(p => p.id === room.hostId);
-      if (newHost) newHost.ready = true;
-    }
-  }
-
-  broadcast(roomCode, roomState(roomCode));
-}
-
-function schedulePlayerDisconnect(roomCode, playerId) {
-  const room = rooms[roomCode];
-  if (!room) return;
-  const player = room.players.find(p => p.id === playerId);
-  if (!player) return;
-
-  cancelDisconnectTimer(player);
-  player._disconnectTimer = setTimeout(() => {
-    removePlayer(roomCode, playerId);
-  }, PLAYER_DISCONNECT_GRACE);
+  removePlayerImmediate(roomCode, playerId, { allowRejoin: false });
 }
 
 function handleDisconnect(roomCode, playerId) {
@@ -214,7 +220,8 @@ function handleDisconnect(roomCode, playerId) {
   }
 
   if (!room.started) {
-    schedulePlayerDisconnect(roomCode, playerId);
+    removePlayerImmediate(roomCode, playerId, { allowRejoin: true });
+    return;
   }
 
   broadcast(roomCode, roomState(roomCode));
@@ -253,6 +260,7 @@ wss.on('connection', ws => {
         players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true }],
         settings: { spies: 1, time: 8, maxPlayers: 4 },
         started: false,
+        reconnectGrace: {},
       };
       ws.send(JSON.stringify({ type: 'created', code, playerId: myId }));
       broadcast(code, roomState(code));
@@ -264,6 +272,7 @@ wss.on('connection', ws => {
       const room = rooms[code];
       if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
+      cleanGrace(room);
       const max = room.settings.maxPlayers || 12;
       if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
       myRoom = code;
@@ -278,11 +287,11 @@ wss.on('connection', ws => {
       const code = (msg.code || '').toUpperCase();
       const room = rooms[code];
       if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
+      cleanGrace(room);
       const existing = room.players.find(p => p.id === msg.playerId);
       if (existing) {
         existing.ws = ws;
         if (msg.name) existing.name = msg.name;
-        cancelDisconnectTimer(existing);
         clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
@@ -299,15 +308,34 @@ wss.on('connection', ws => {
         if (room.started) sendGameStart(room, existing);
         broadcast(code, state);
       } else {
-        // player not found — treat as fresh join
-        if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
-        const max = room.settings.maxPlayers || 12;
-        if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
-        myRoom = code;
-        myId   = 'p' + (room.players.length + 1);
-        room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
-        ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
-        broadcast(code, roomState(code));
+        const grace = room.reconnectGrace?.[msg.playerId];
+        if (grace && Date.now() < grace.expiresAt) {
+          delete room.reconnectGrace[msg.playerId];
+          myRoom = code;
+          myId   = msg.playerId;
+          room.players.push({
+            id: myId,
+            name: msg.name || grace.name,
+            ws,
+            ready: grace.ready,
+          });
+          if (grace.wasHost) room.hostId = myId;
+          clearTimeout(room._emptyTimer);
+
+          const state = roomState(code);
+          ws.send(JSON.stringify({ type: 'rejoined', code, playerId: myId, roomState: state, gameData: null }));
+          broadcast(code, state);
+        } else {
+          if (grace) delete room.reconnectGrace[msg.playerId];
+          if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
+          const max = room.settings.maxPlayers || 12;
+          if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
+          myRoom = code;
+          myId   = 'p' + (room.players.length + 1);
+          room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
+          ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
+          broadcast(code, roomState(code));
+        }
       }
     }
 

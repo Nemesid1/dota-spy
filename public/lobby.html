@@ -237,7 +237,6 @@
       const badges = [];
       if (p.id === state.hostId) badges.push('<span class="badge badge-host">Хост</span>');
       if (p.id === getMyId())    badges.push('<span class="badge" style="background:#30363d;color:#e8a838">Ты</span>');
-      if (p.online === false)    badges.push('<span class="badge badge-waiting">Отключён</span>');
       else if (p.id !== state.hostId) badges.push(p.ready
         ? '<span class="badge badge-ready">Готов</span>'
         : '<span class="badge badge-waiting">Ждёт</span>');

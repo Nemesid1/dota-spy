@@ -116,10 +116,23 @@ function checkVoteResult(roomCode) {
   });
 }
 
-// ── WS ───────────────────────────────────────────────────────────────────────
+const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000; // 10 мин — хост может ждать друзей
+
 const wss = new WebSocketServer({ server });
 
+// Keepalive — не даём Render разрывать «тихие» WebSocket-соединения
+const pingInterval = setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 25000);
+wss.on('close', () => clearInterval(pingInterval));
+
 wss.on('connection', ws => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   let myRoom = null;
   let myId   = null;
 
@@ -147,7 +160,7 @@ wss.on('connection', ws => {
     else if (msg.type === 'join') {
       const code = (msg.code || '').toUpperCase();
       const room = rooms[code];
-      if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена' })); return; }
+      if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
       const max = room.settings.maxPlayers || 12;
       if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
@@ -162,7 +175,7 @@ wss.on('connection', ws => {
     else if (msg.type === 'rejoin') {
       const code = (msg.code || '').toUpperCase();
       const room = rooms[code];
-      if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена' })); return; }
+      if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       const existing = room.players.find(p => p.id === msg.playerId);
       if (existing) {
         // restore ws reference
@@ -379,16 +392,14 @@ wss.on('connection', ws => {
     // Считаем, кто остался на связи
     const activePlayers = room.players.filter(p => p.ws !== null);
     
-    // Если никого на связи нет, НЕ удаляем комнату сразу.
-    // Даем 15 секунд на перезагрузку страницы (rejoin).
+    // Даём время на переподключение (rejoin) и ожидание друзей
     if (activePlayers.length === 0) {
       clearTimeout(room._emptyTimer);
       room._emptyTimer = setTimeout(() => {
-        // Если через 15 секунд так и никого нет — тогда удаляем
         if (rooms[myRoom] && rooms[myRoom].players.filter(p => p.ws !== null).length === 0) {
           delete rooms[myRoom];
         }
-      }, 15000);
+      }, ROOM_EMPTY_TIMEOUT);
       return;
     }
     

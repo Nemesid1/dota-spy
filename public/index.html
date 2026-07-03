@@ -15,7 +15,7 @@
       <input type="text" id="nameInput" placeholder="Введи имя" maxlength="20"/>
     </div>
 
-    <button class="btn btn-primary" onclick="createRoom()">🏠 Создать комнату</button>
+    <button class="btn btn-primary" id="btnCreate" onclick="createRoom()">🏠 Создать комнату</button>
 
     <div class="divider">или</div>
 
@@ -23,36 +23,59 @@
       <label>Код комнаты</label>
       <input type="text" id="codeInput" placeholder="XXXX" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-weight:700"/>
     </div>
-    <button class="btn btn-secondary" onclick="joinRoom()">🚪 Войти в комнату</button>
+    <button class="btn btn-secondary" id="btnJoin" onclick="joinRoom()">🚪 Войти в комнату</button>
 
     <div class="error-msg" id="errMsg"></div>
+    <div style="font-size:.78rem;color:#8b949e;margin-top:8px;text-align:center" id="statusMsg"></div>
   </div>
 </div>
 
+<script src="ws-connect.js"></script>
 <script>
-  const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
   let ws;
+  let connecting = false;
+
+  function setButtonsDisabled(disabled) {
+    document.getElementById('btnCreate').disabled = disabled;
+    document.getElementById('btnJoin').disabled = disabled;
+  }
 
   function connect(onOpen) {
-    ws = new WebSocket(WS_URL);
-    ws.onopen = onOpen;
-    ws.onmessage = e => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'error') { document.getElementById('errMsg').textContent = msg.text; return; }
-      if (msg.type === 'created' || msg.type === 'joined') {
-        sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
-        sessionStorage.setItem('dotaspy_code', msg.code);
-        window._ws = ws;
-        location.href = 'lobby.html';
-      }
-    };
-    ws.onerror = () => { document.getElementById('errMsg').textContent = 'Ошибка подключения'; };
+    if (connecting) return;
+    connecting = true;
+    setButtonsDisabled(true);
+    document.getElementById('errMsg').textContent = '';
+
+    connectWithRetry({
+      onStatus: text => { document.getElementById('statusMsg').textContent = text; },
+      onOpen: socket => {
+        ws = socket;
+        connecting = false;
+        setButtonsDisabled(false);
+        onOpen(socket);
+      },
+      onMessage: e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'error') {
+          document.getElementById('errMsg').textContent = msg.text;
+          document.getElementById('statusMsg').textContent = '';
+          connecting = false;
+          setButtonsDisabled(false);
+          return;
+        }
+        if (msg.type === 'created' || msg.type === 'joined') {
+          sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
+          sessionStorage.setItem('dotaspy_code', msg.code);
+          location.href = 'lobby.html';
+        }
+      },
+    });
   }
 
   function createRoom() {
     const name = document.getElementById('nameInput').value.trim() || 'Хост';
     sessionStorage.setItem('dotaspy_name', name);
-    connect(() => ws.send(JSON.stringify({ type: 'create', name })));
+    connect(socket => socket.send(JSON.stringify({ type: 'create', name })));
   }
 
   function joinRoom() {
@@ -60,7 +83,7 @@
     const code = document.getElementById('codeInput').value.trim().toUpperCase();
     if (!code) { document.getElementById('errMsg').textContent = 'Введи код комнаты'; return; }
     sessionStorage.setItem('dotaspy_name', name);
-    connect(() => ws.send(JSON.stringify({ type: 'join', name, code })));
+    connect(socket => socket.send(JSON.stringify({ type: 'join', name, code })));
   }
 </script>
 </body>

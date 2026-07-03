@@ -79,6 +79,7 @@
 <script>
   const myId   = sessionStorage.getItem('dotaspy_ws_id');
   const myCode = sessionStorage.getItem('dotaspy_code');
+  if (!myCode || !myId) { location.href = 'index.html'; }
   let isHost   = false;
   let ws;
   const disabledHeroes = new Set();
@@ -136,14 +137,12 @@
     }, 10000);
     
     ws.onopen = () => {
-    ws.onopen = () => {
       clearTimeout(connectionTimeout);
       reconnectAttempts = 0;
       updateConnectionStatus('connected', 'Подключено к лобби');
       
       const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
-      // rejoin — not a new join, just restore connection
       ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId }));
     };
     ws.onmessage = e => handle(JSON.parse(e.data));

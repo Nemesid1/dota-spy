@@ -103,7 +103,7 @@
 <script>
 // Try to get game data from sessionStorage or wait for rejoin
 let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
-let role, hero, location: locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer;
+let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer;
 
 if (gameData) {
   ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer } = gameData);
@@ -121,10 +121,11 @@ let crossedMode = false;
 
 // ── Players vote list
 function renderVotePlayers() {
+  if (!players) return;
   const vp = document.getElementById('votePlayers');
   vp.innerHTML = '';
   players.forEach(p => {
-    if (p.id === myId) return; // can't vote against yourself
+    if (p.id === myId) return;
     const btn = document.createElement('button');
     btn.className = 'vote-player-btn' + (usedVote ? ' used' : '');
     btn.id = 'vpbtn-' + p.id;
@@ -133,26 +134,30 @@ function renderVotePlayers() {
     btn.onclick = () => startVote(p.id, p.name);
     vp.appendChild(btn);
   });
-  // self badge
   const self = document.createElement('div');
   self.className = 'vote-player-btn self-badge';
   self.textContent = (players.find(p=>p.id===myId)?.name || '') + ' (ты)';
   vp.appendChild(self);
 }
-renderVotePlayers();
 
-// ── Initialize spy notes if spy
-if (role === 'spy') {
-  document.getElementById('spyNotesSection').style.display = '';
-  initSpyNotes();
+function initGameUI() {
+  renderVotePlayers();
+  if (role === 'spy') {
+    document.getElementById('spyNotesSection').style.display = '';
+    initSpyNotes();
+  }
+  if (!isHost) document.getElementById('timerControls').style.display = 'none';
+  renderTimer();
 }
 
 // ── Timer
-let totalSec = time * 60;
-let remaining = totalSec;
+let totalSec = (time || 8) * 60;
+let remaining = initialTimer ?? totalSec;
 let running = false;
 let iv = null;
-const isHost = hostId && (myId === hostId); // Correct host detection using server-provided hostId
+const isHost = hostId && (myId === hostId);
+
+if (gameData) initGameUI();
 
 // ── Spy notes functions
 function initSpyNotes() {
@@ -361,24 +366,12 @@ window.addEventListener('load', () => {
   connect();
 });
 
-function handle(msg) {
-  if (msg.type === 'timer') { remaining = msg.remaining; renderTimer(); }
-  if (msg.type === 'room_state' && !msg.started) { location.href = 'lobby.html'; }
-  if (msg.type === 'vote_started')  onVoteStarted(msg);
-  if (msg.type === 'vote_update')   onVoteUpdate(msg);
-  if (msg.type === 'vote_result')   onVoteResult(msg);
-  if (msg.type === 'error')         { document.getElementById('voteErr').textContent = msg.text; setTimeout(()=>document.getElementById('voteErr').textContent='',3000); }
-}
-
-if (!isHost) document.getElementById('timerControls').style.display = 'none';
-
 function fmt(s) { return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
 function renderTimer() {
   const el = document.getElementById('timerDisplay');
   el.textContent = remaining > 0 ? fmt(remaining) : 'ВРЕМЯ!';
   el.className = 'timer-display' + (remaining <= 30 ? ' red' : '');
 }
-renderTimer();
 
 function toggleTimer() {
   if (running) {

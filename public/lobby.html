@@ -86,6 +86,7 @@
   let ws;
   let connHandle = null;
   let hasConnectedOnce = false;
+  let syncTimer = null;
   const disabledHeroes = new Set();
 
   function getMyId() {
@@ -147,10 +148,17 @@
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
         const playerId = getMyId();
         ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId }));
+
+        clearInterval(syncTimer);
+        syncTimer = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'sync' }));
+          }
+        }, 5000);
       },
       onMessage: e => handle(JSON.parse(e.data)),
       onDisconnect: () => {
-        if (connHandle) connHandle.stop();
+        clearInterval(syncTimer);
         updateConnectionStatus('disconnected', 'Переподключение...');
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttempts++;
@@ -171,7 +179,11 @@
 
   function handle(msg) {
     if (msg.type === 'error') { document.getElementById('errMsg').textContent = msg.text; return; }
-    if (msg.type === 'joined') { sessionStorage.setItem('dotaspy_ws_id', msg.playerId); return; }
+    if (msg.type === 'joined') {
+      sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
+      if (msg.roomState) renderLobby(msg.roomState);
+      return;
+    }
     if (msg.type === 'rejoined') {
       if (msg.gameData) {
         sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));

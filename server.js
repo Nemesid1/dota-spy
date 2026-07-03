@@ -202,9 +202,6 @@ function handleDisconnect(roomCode, playerId) {
   const room = rooms[roomCode];
   if (!room) return;
 
-  const player = room.players.find(p => p.id === playerId);
-  if (player) player.ws = null;
-
   if (activePlayers(room).length === 0) {
     clearTimeout(room._emptyTimer);
     room._emptyTimer = setTimeout(() => {
@@ -225,14 +222,14 @@ function handleDisconnect(roomCode, playerId) {
 
 const wss = new WebSocketServer({ server });
 
-// Keepalive — не даём Render разрывать «тихие» WebSocket-соединения
+// Keepalive — мягкая проверка (не рвём соединение агрессивно)
 const pingInterval = setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (ws.isAlive === false) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
+  wss.clients.forEach(client => {
+    if (client.isAlive === false) return client.terminate();
+    client.isAlive = false;
+    try { client.ping(); } catch {}
   });
-}, 25000);
+}, 45000);
 wss.on('close', () => clearInterval(pingInterval));
 
 wss.on('connection', ws => {
@@ -272,7 +269,7 @@ wss.on('connection', ws => {
       myRoom = code;
       myId   = 'p' + (room.players.length + 1);
       room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
-      ws.send(JSON.stringify({ type: 'joined', code, playerId: myId }));
+      ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
       broadcast(code, roomState(code));
     }
 
@@ -284,22 +281,23 @@ wss.on('connection', ws => {
       const existing = room.players.find(p => p.id === msg.playerId);
       if (existing) {
         existing.ws = ws;
+        if (msg.name) existing.name = msg.name;
         cancelDisconnectTimer(existing);
         clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
 
-        const response = {
+        const state = roomState(code);
+        ws.send(JSON.stringify({
           type: 'rejoined',
           code,
           playerId: myId,
-          roomState: roomState(code),
+          roomState: state,
           gameData: room.started ? (existing.gameAssignment || buildGameAssignment(room, existing, code)) : null,
-        };
-        ws.send(JSON.stringify(response));
+        }));
 
         if (room.started) sendGameStart(room, existing);
-        else broadcast(code, roomState(code));
+        broadcast(code, state);
       } else {
         // player not found — treat as fresh join
         if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
@@ -308,9 +306,15 @@ wss.on('connection', ws => {
         myRoom = code;
         myId   = 'p' + (room.players.length + 1);
         room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
-        ws.send(JSON.stringify({ type: 'joined', code, playerId: myId }));
+        ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
         broadcast(code, roomState(code));
       }
+    }
+
+    // ── sync room state (fallback if broadcast missed)
+    else if (msg.type === 'sync') {
+      const room = rooms[myRoom];
+      if (room) ws.send(JSON.stringify(roomState(myRoom)));
     }
 
     // ── update settings (host only)
@@ -467,6 +471,11 @@ wss.on('connection', ws => {
 
   ws.on('close', () => {
     if (!myRoom || !rooms[myRoom]) return;
+    const room = rooms[myRoom];
+    const player = room.players.find(p => p.id === myId);
+    // Игнорируем закрытие устаревшего сокета (перезагрузка / переподключение)
+    if (!player || player.ws !== ws) return;
+    player.ws = null;
     handleDisconnect(myRoom, myId);
   });
 });

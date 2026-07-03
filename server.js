@@ -3,7 +3,6 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
-// Use environment variable for port (for hosting) or default to 3000
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
 
@@ -15,7 +14,9 @@ const MIME = {
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  let filePath = path.join(PUBLIC, req.url === '/' ? 'index.html' : req.url);
+  const urlPath = req.url.split('?')[0];
+  let filePath = path.join(PUBLIC, urlPath === '/' ? 'index.html' : urlPath);
+  if (!filePath.startsWith(PUBLIC)) { res.writeHead(403); res.end('Forbidden'); return; }
   const ext = path.extname(filePath);
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
@@ -166,6 +167,7 @@ wss.on('connection', ws => {
       if (existing) {
         // restore ws reference
         existing.ws = ws;
+	clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
         
@@ -369,15 +371,34 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     if (!myRoom || !rooms[myRoom]) return;
     const room = rooms[myRoom];
-    room.players = room.players.filter(p => p.id !== myId);
-    if (room.players.length === 0) { delete rooms[myRoom]; return; }
-    // pass host if host left
-    if (room.hostId === myId) {
-      room.hostId = room.players[0].id;
-      if (room.players[0]) room.players[0].ready = true;
+    
+    // Не удаляем игрока из списка! Просто обнуляем его вебсокет.
+    const player = room.players.find(p => p.id === myId);
+    if (player) player.ws = null;
+    
+    // Считаем, кто остался на связи
+    const activePlayers = room.players.filter(p => p.ws !== null);
+    
+    // Если никого на связи нет, НЕ удаляем комнату сразу.
+    // Даем 15 секунд на перезагрузку страницы (rejoin).
+    if (activePlayers.length === 0) {
+      clearTimeout(room._emptyTimer);
+      room._emptyTimer = setTimeout(() => {
+        // Если через 15 секунд так и никого нет — тогда удаляем
+        if (rooms[myRoom] && rooms[myRoom].players.filter(p => p.ws !== null).length === 0) {
+          delete rooms[myRoom];
+        }
+      }, 15000);
+      return;
+    }
+    
+    // Передача хоста, если хост вышел (но остались другие)
+    if (room.hostId === myId && activePlayers.length > 0) {
+      room.hostId = activePlayers[0].id;
+      activePlayers[0].ready = true;
     }
     broadcast(myRoom, roomState(myRoom));
   });
 });
 
-server.listen(PORT, () => console.log(`Дота-Шпион запущен: http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Дота-Шпион запущен на порту ${PORT}`));

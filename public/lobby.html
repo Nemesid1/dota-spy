@@ -84,6 +84,7 @@
   if (!myCode || !myId) { location.href = 'index.html'; }
   let isHost   = false;
   let ws;
+  let hasConnectedOnce = false;
   const disabledHeroes = new Set();
 
   // --- Hero grid
@@ -124,14 +125,17 @@
   // --- WS reconnect from sessionStorage
   function connect() {
     updateConnectionStatus('connecting', 'Подключение к лобби...');
-    document.getElementById('loadingOverlay').style.display = 'flex';
-    document.getElementById('lobbyPage').style.display = 'none';
+    if (!hasConnectedOnce) {
+      document.getElementById('loadingOverlay').style.display = 'flex';
+      document.getElementById('lobbyPage').style.display = 'none';
+    }
 
     connectWithRetry({
       maxAttempts: 12,
       onStatus: text => updateConnectionStatus('connecting', text || 'Подключение к лобби...'),
       onOpen: socket => {
         ws = socket;
+        hasConnectedOnce = true;
         reconnectAttempts = 0;
         updateConnectionStatus('connected', 'Подключено к лобби');
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
@@ -161,6 +165,7 @@
   function handle(msg) {
     if (msg.type === 'error')       { document.getElementById('errMsg').textContent = msg.text; return; }
     if (msg.type === 'joined')      { sessionStorage.setItem('dotaspy_ws_id', msg.playerId); return; }
+    if (msg.type === 'rejoined' && msg.roomState) { renderLobby(msg.roomState); return; }
     if (msg.type === 'room_state')  { renderLobby(msg); return; }
     if (msg.type === 'game_start')  {
       sessionStorage.setItem('dotaspy_game', JSON.stringify(msg));

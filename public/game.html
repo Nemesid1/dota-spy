@@ -100,6 +100,7 @@
 </div>
 
 <script src="heroes.js"></script>
+<script src="ws-connect.js"></script>
 <script>
 // Try to get game data from sessionStorage or wait for rejoin
 let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
@@ -157,7 +158,13 @@ let running = false;
 let iv = null;
 const isHost = hostId && (myId === hostId);
 
-if (gameData) initGameUI();
+if (gameData) {
+  document.getElementById('loadingOverlay').style.display = 'none';
+  initGameUI();
+} else {
+  document.getElementById('loadingOverlay').style.display = 'flex';
+  document.getElementById('gamePage').style.display = 'none';
+}
 
 // ── Spy notes functions
 function initSpyNotes() {
@@ -240,15 +247,17 @@ function handle(msg) {
   console.log('WebSocket message:', msg.type, msg);
   
   if (msg.type === 'rejoined') {
-    // Handle reconnection with full game state
     if (msg.gameData) {
       sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));
-      location.reload(); // Reload to apply new data
+      // Перезагрузка только если зашли без данных (обновление страницы посреди игры)
+      if (!gameData) location.reload();
       return;
-    } else if (msg.roomState && !msg.roomState.started) {
+    }
+    if (msg.roomState && !msg.roomState.started) {
       location.href = 'lobby.html';
       return;
     }
+    return;
   }
   
   if (msg.type === 'timer') { 
@@ -299,70 +308,45 @@ function updateConnectionStatus(status, text) {
 
 function connect() {
   updateConnectionStatus('connecting', 'Подключение...');
-  
-  const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
-  ws = new WebSocket(WS_URL);
-  
-  // Set timeout for connection
-  const connectionTimeout = setTimeout(() => {
-    if (ws.readyState !== WebSocket.OPEN) {
-      ws.close();
-      updateConnectionStatus('disconnected', 'Таймаут подключения');
-    }
-  }, 10000);
-  
-  ws.onopen = () => {
-    clearTimeout(connectionTimeout);
-    reconnectAttempts = 0;
-    updateConnectionStatus('connected', 'Подключено');
-    
-    const code = sessionStorage.getItem('dotaspy_code');
-    const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
-    const playerId = sessionStorage.getItem('dotaspy_ws_id');
-    ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId }));
-    
-    // After rejoining, sync spy notes with server
-    if (role === 'spy' && crossedHeroes.size > 0) {
-      setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ 
-            type: 'spy_notes_update', 
-            crossedHeroes: [...crossedHeroes] 
-          }));
-        }
-      }, 500);
-    }
-  };
-  
-  ws.onmessage = e => handle(JSON.parse(e.data));
-  
-  ws.onerror = () => {
-    updateConnectionStatus('disconnected', 'Ошибка соединения');
-  };
-  
-  ws.onclose = () => {
-    clearTimeout(connectionTimeout);
-    updateConnectionStatus('disconnected', 'Переподключение...');
-    
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
-      setTimeout(connect, delay);
-    } else {
-      updateConnectionStatus('disconnected', 'Не удалось подключиться');
-      if (confirm('Соединение потеряно. Хотите перезагрузить страницу?')) {
-        location.reload();
+
+  connectWithRetry({
+    maxAttempts: 12,
+    onStatus: text => updateConnectionStatus('connecting', text || 'Подключение...'),
+    onOpen: socket => {
+      ws = socket;
+      reconnectAttempts = 0;
+      updateConnectionStatus('connected', 'Подключено');
+
+      const code = sessionStorage.getItem('dotaspy_code');
+      const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
+      const playerId = sessionStorage.getItem('dotaspy_ws_id');
+      ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId }));
+
+      if (role === 'spy' && crossedHeroes.size > 0) {
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'spy_notes_update', crossedHeroes: [...crossedHeroes] }));
+          }
+        }, 500);
       }
-    }
-  };
+    },
+    onMessage: e => handle(JSON.parse(e.data)),
+    onDisconnect: () => {
+      updateConnectionStatus('disconnected', 'Переподключение...');
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+        setTimeout(connect, delay);
+      } else {
+        updateConnectionStatus('disconnected', 'Не удалось подключиться');
+        if (confirm('Соединение потеряно. Хотите перезагрузить страницу?')) location.reload();
+      }
+    },
+  });
 }
 
 // Initialize connection after page loads
 window.addEventListener('load', () => {
-  if (!gameData) {
-    document.getElementById('loadingOverlay').style.display = 'flex';
-    document.getElementById('gamePage').style.display = 'none';
-  }
   connect();
 });
 

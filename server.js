@@ -67,7 +67,12 @@ function roomState(roomCode) {
     type: 'room_state',
     code: roomCode,
     hostId: room.hostId,
-    players: room.players.map(p => ({ id: p.id, name: p.name, ready: p.ready })),
+    players: room.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      ready: p.ready,
+      online: !!(p.ws && p.ws.readyState === 1),
+    })),
     settings: room.settings,
     started: room.started,
     vote: room.vote,
@@ -116,7 +121,107 @@ function checkVoteResult(roomCode) {
   });
 }
 
-const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000; // 10 мин — хост может ждать друзей
+const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000; // 10 мин — пустая комната
+const PLAYER_DISCONNECT_GRACE = 30000; // 30 сек на переподключение (перезагрузка страницы)
+
+function activePlayers(room) {
+  return room.players.filter(p => p.ws && p.ws.readyState === 1);
+}
+
+function cancelDisconnectTimer(player) {
+  if (player && player._disconnectTimer) {
+    clearTimeout(player._disconnectTimer);
+    player._disconnectTimer = null;
+  }
+}
+
+function buildGameAssignment(room, player, roomCode) {
+  const isSpy = player.role === 'spy';
+  const hero = room.secretHero;
+  return {
+    type: 'game_start',
+    role: player.role,
+    hero: isSpy ? null : hero,
+    location: isSpy ? null : hero,
+    time: room.settings.time,
+    players: room.players.map(x => ({ id: x.id, name: x.name })),
+    myId: player.id,
+    spyNotes: isSpy ? getSpyNotes(roomCode, player.id) : [],
+    hostId: room.hostId,
+    initialTimer: room.timer?.remaining || room.settings.time * 60,
+  };
+}
+
+function sendGameStart(room, player) {
+  if (!player.gameAssignment) return;
+  if (player.ws && player.ws.readyState === 1) {
+    player.ws.send(JSON.stringify(player.gameAssignment));
+  }
+}
+
+function removePlayer(roomCode, playerId) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  const player = room.players.find(p => p.id === playerId);
+  if (!player || player.ws) return;
+
+  room.players = room.players.filter(p => p.id !== playerId);
+  cancelDisconnectTimer(player);
+
+  if (room.players.length === 0) {
+    delete rooms[roomCode];
+    delete spyNotes[roomCode];
+    return;
+  }
+
+  if (room.hostId === playerId) {
+    const online = activePlayers(room);
+    room.hostId = (online[0] || room.players[0]).id;
+    if (room.hostId) {
+      const newHost = room.players.find(p => p.id === room.hostId);
+      if (newHost) newHost.ready = true;
+    }
+  }
+
+  broadcast(roomCode, roomState(roomCode));
+}
+
+function schedulePlayerDisconnect(roomCode, playerId) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  const player = room.players.find(p => p.id === playerId);
+  if (!player) return;
+
+  cancelDisconnectTimer(player);
+  player._disconnectTimer = setTimeout(() => {
+    removePlayer(roomCode, playerId);
+  }, PLAYER_DISCONNECT_GRACE);
+}
+
+function handleDisconnect(roomCode, playerId) {
+  const room = rooms[roomCode];
+  if (!room) return;
+
+  const player = room.players.find(p => p.id === playerId);
+  if (player) player.ws = null;
+
+  if (activePlayers(room).length === 0) {
+    clearTimeout(room._emptyTimer);
+    room._emptyTimer = setTimeout(() => {
+      if (rooms[roomCode] && activePlayers(rooms[roomCode]).length === 0) {
+        delete rooms[roomCode];
+        delete spyNotes[roomCode];
+      }
+    }, ROOM_EMPTY_TIMEOUT);
+    return;
+  }
+
+  if (!room.started) {
+    schedulePlayerDisconnect(roomCode, playerId);
+  }
+
+  broadcast(roomCode, roomState(roomCode));
+}
 
 const wss = new WebSocketServer({ server });
 
@@ -178,33 +283,23 @@ wss.on('connection', ws => {
       if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       const existing = room.players.find(p => p.id === msg.playerId);
       if (existing) {
-        // restore ws reference
         existing.ws = ws;
-	clearTimeout(room._emptyTimer);
+        cancelDisconnectTimer(existing);
+        clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
-        
-        // Send full state to reconnecting player
+
         const response = {
           type: 'rejoined',
           code,
           playerId: myId,
           roomState: roomState(code),
-          // If game started, send game data
-          gameData: room.started ? {
-            role: existing.role,
-            hero: existing.role === 'spy' ? null : (room.players.find(p => p.role !== 'spy')?.hero || null),
-            location: room.players.find(p => p.role === 'civilian')?.location || null,
-            time: room.settings.time,
-            players: room.players.map(x => ({ id: x.id, name: x.name })),
-            myId: existing.id,
-            hostId: room.hostId,
-            spyNotes: existing.role === 'spy' ? getSpyNotes(code, existing.id) : [],
-            initialTimer: room.timer?.remaining || room.settings.time * 60
-          } : null
+          gameData: room.started ? (existing.gameAssignment || buildGameAssignment(room, existing, code)) : null,
         };
         ws.send(JSON.stringify(response));
-        broadcast(code, roomState(code));
+
+        if (room.started) sendGameStart(room, existing);
+        else broadcast(code, roomState(code));
       } else {
         // player not found — treat as fresh join
         if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
@@ -263,37 +358,21 @@ wss.on('connection', ws => {
         return;
       }
       const hero = available[Math.floor(Math.random() * available.length)];
+      room.secretHero = hero;
 
       const n = room.players.length;
       const spyCount = Math.min(room.settings.spies, n - 1);
 
-      // shuffle spy indices
       const indices = [...Array(n).keys()].sort(() => Math.random() - .5);
       const spyIds = new Set(indices.slice(0, spyCount).map(i => room.players[i].id));
-
-      // assign random heroes to civilians (no repeats)
-      const heroPool = [...available].sort(() => Math.random() - .5);
-      let hi = 0;
 
       room.started = true;
       room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
       room.players.forEach(p => {
-        const isSpy = spyIds.has(p.id);
-        p.role = isSpy ? 'spy' : 'civilian';
+        p.role = spyIds.has(p.id) ? 'spy' : 'civilian';
         p.usedVote = false;
-        const assignment = {
-          type: 'game_start',
-          role: isSpy ? 'spy' : 'civilian',
-          hero: isSpy ? null : (heroPool.length > 0 ? heroPool[hi++ % heroPool.length] : null),
-          location: hero,
-          time: room.settings.time,
-          players: room.players.map(x => ({ id: x.id, name: x.name })),
-          myId: p.id,
-          spyNotes: isSpy ? getSpyNotes(myRoom, p.id) : [],
-          hostId: room.hostId, // Add hostId for correct host detection
-          initialTimer: room.timer.remaining
-        };
-        if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(assignment));
+        p.gameAssignment = buildGameAssignment(room, p, myRoom);
+        sendGameStart(room, p);
       });
       room.vote = null;
     }
@@ -376,39 +455,19 @@ wss.on('connection', ws => {
       const room = rooms[myRoom];
       if (!room || room.hostId !== myId) return;
       room.started = false;
-      room.players.forEach(p => p.ready = p.id === room.hostId);
+      room.secretHero = null;
+      room.players.forEach(p => {
+        p.ready = p.id === room.hostId;
+        p.role = null;
+        p.gameAssignment = null;
+      });
       broadcast(myRoom, roomState(myRoom));
     }
   });
 
   ws.on('close', () => {
     if (!myRoom || !rooms[myRoom]) return;
-    const room = rooms[myRoom];
-    
-    // Не удаляем игрока из списка! Просто обнуляем его вебсокет.
-    const player = room.players.find(p => p.id === myId);
-    if (player) player.ws = null;
-    
-    // Считаем, кто остался на связи
-    const activePlayers = room.players.filter(p => p.ws !== null);
-    
-    // Даём время на переподключение (rejoin) и ожидание друзей
-    if (activePlayers.length === 0) {
-      clearTimeout(room._emptyTimer);
-      room._emptyTimer = setTimeout(() => {
-        if (rooms[myRoom] && rooms[myRoom].players.filter(p => p.ws !== null).length === 0) {
-          delete rooms[myRoom];
-        }
-      }, ROOM_EMPTY_TIMEOUT);
-      return;
-    }
-    
-    // Передача хоста, если хост вышел (но остались другие)
-    if (room.hostId === myId && activePlayers.length > 0) {
-      room.hostId = activePlayers[0].id;
-      activePlayers[0].ready = true;
-    }
-    broadcast(myRoom, roomState(myRoom));
+    handleDisconnect(myRoom, myId);
   });
 });
 

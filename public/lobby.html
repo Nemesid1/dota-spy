@@ -84,8 +84,13 @@
   if (!myCode || !myId) { location.href = 'index.html'; }
   let isHost   = false;
   let ws;
+  let connHandle = null;
   let hasConnectedOnce = false;
   const disabledHeroes = new Set();
+
+  function getMyId() {
+    return sessionStorage.getItem('dotaspy_ws_id');
+  }
 
   // --- Hero grid
   const heroGrid = document.getElementById('heroGrid');
@@ -124,13 +129,14 @@
   
   // --- WS reconnect from sessionStorage
   function connect() {
+    if (connHandle) connHandle.stop();
     updateConnectionStatus('connecting', 'Подключение к лобби...');
     if (!hasConnectedOnce) {
       document.getElementById('loadingOverlay').style.display = 'flex';
       document.getElementById('lobbyPage').style.display = 'none';
     }
 
-    connectWithRetry({
+    connHandle = connectWithRetry({
       maxAttempts: 12,
       onStatus: text => updateConnectionStatus('connecting', text || 'Подключение к лобби...'),
       onOpen: socket => {
@@ -139,11 +145,12 @@
         reconnectAttempts = 0;
         updateConnectionStatus('connected', 'Подключено к лобби');
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
-        const playerId = sessionStorage.getItem('dotaspy_ws_id');
+        const playerId = getMyId();
         ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId }));
       },
       onMessage: e => handle(JSON.parse(e.data)),
       onDisconnect: () => {
+        if (connHandle) connHandle.stop();
         updateConnectionStatus('disconnected', 'Переподключение...');
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttempts++;
@@ -163,11 +170,26 @@
   });
 
   function handle(msg) {
-    if (msg.type === 'error')       { document.getElementById('errMsg').textContent = msg.text; return; }
-    if (msg.type === 'joined')      { sessionStorage.setItem('dotaspy_ws_id', msg.playerId); return; }
-    if (msg.type === 'rejoined' && msg.roomState) { renderLobby(msg.roomState); return; }
-    if (msg.type === 'room_state')  { renderLobby(msg); return; }
-    if (msg.type === 'game_start')  {
+    if (msg.type === 'error') { document.getElementById('errMsg').textContent = msg.text; return; }
+    if (msg.type === 'joined') { sessionStorage.setItem('dotaspy_ws_id', msg.playerId); return; }
+    if (msg.type === 'rejoined') {
+      if (msg.gameData) {
+        sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));
+        location.href = 'game.html';
+        return;
+      }
+      if (msg.roomState) { renderLobby(msg.roomState); return; }
+    }
+    if (msg.type === 'room_state') {
+      if (msg.started) {
+        const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
+        ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId: getMyId() }));
+        return;
+      }
+      renderLobby(msg);
+      return;
+    }
+    if (msg.type === 'game_start') {
       sessionStorage.setItem('dotaspy_game', JSON.stringify(msg));
       location.href = 'game.html';
     }
@@ -175,7 +197,7 @@
 
   function renderLobby(state) {
     document.getElementById('roomCode').textContent = state.code;
-    isHost = state.hostId === myId;
+    isHost = state.hostId === getMyId();
 
     document.getElementById('hostSettings').style.display = isHost ? '' : 'none';
     document.getElementById('heroPicker').style.display   = isHost ? '' : 'none';
@@ -202,8 +224,9 @@
       row.className = 'player-row';
       const badges = [];
       if (p.id === state.hostId) badges.push('<span class="badge badge-host">Хост</span>');
-      if (p.id === myId)         badges.push('<span class="badge" style="background:#30363d;color:#e8a838">Ты</span>');
-      if (p.id !== state.hostId) badges.push(p.ready
+      if (p.id === getMyId())    badges.push('<span class="badge" style="background:#30363d;color:#e8a838">Ты</span>');
+      if (p.online === false)    badges.push('<span class="badge badge-waiting">Отключён</span>');
+      else if (p.id !== state.hostId) badges.push(p.ready
         ? '<span class="badge badge-ready">Готов</span>'
         : '<span class="badge badge-waiting">Ждёт</span>');
       row.innerHTML = `<span class="p-name">${p.name}</span>${badges.join('')}`;
@@ -212,6 +235,7 @@
   }
 
   function sendSettings() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'settings', settings: {
       maxPlayers: parseInt(document.getElementById('playerRange').value),
       spies: parseInt(document.getElementById('spyRange').value),
@@ -220,10 +244,12 @@
   }
 
   function toggleReady() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'ready' }));
   }
 
   function startGame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'start', heroes: HEROES, disabledHeroes: [...disabledHeroes] }));
   }
 </script>

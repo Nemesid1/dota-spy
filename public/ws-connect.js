@@ -2,7 +2,6 @@ function getWsUrl() {
   return `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 }
 
-// Render free tier "спит" ~15 мин — первое подключение может занять до минуты
 function connectWithRetry({ onOpen, onMessage, onStatus, onDisconnect, maxAttempts = 12, retryDelay = 3000, timeout = 25000 }) {
   let ws;
   let attempt = 0;
@@ -24,6 +23,18 @@ function connectWithRetry({ onOpen, onMessage, onStatus, onDisconnect, maxAttemp
     ws = new WebSocket(getWsUrl());
     const timer = setTimeout(() => { try { ws.close(); } catch {} }, timeout);
 
+    const onInitialClose = () => {
+      clearTimeout(timer);
+      if (stopped || opened) return;
+      if (attempt < maxAttempts) {
+        setTimeout(tryConnect, retryDelay);
+      } else {
+        setStatus('Не удалось подключиться. Подождите минуту и попробуйте снова.');
+      }
+    };
+
+    ws.onclose = onInitialClose;
+
     ws.onopen = () => {
       opened = true;
       connected = true;
@@ -37,22 +48,15 @@ function connectWithRetry({ onOpen, onMessage, onStatus, onDisconnect, maxAttemp
       };
       onOpen(ws);
     };
-
-    ws.onclose = () => {
-      clearTimeout(timer);
-      if (stopped || opened) return;
-      if (attempt < maxAttempts) {
-        setTimeout(tryConnect, retryDelay);
-      } else {
-        setStatus('Не удалось подключиться. Подождите минуту и попробуйте снова.');
-      }
-    };
   }
 
   tryConnect();
 
   return {
     get socket() { return ws; },
-    stop() { stopped = true; try { ws.close(); } catch {} },
+    stop() {
+      stopped = true;
+      try { ws.close(); } catch {}
+    },
   };
 }

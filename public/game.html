@@ -41,17 +41,23 @@
     </div>
   </div>
 
-  <!-- Spy notes (visible only to spy) -->
-  <div class="card" id="spyNotesSection" style="max-width:520px;display:none">
-    <h2>Заметки шпиона — отмечай героев которых отсек</h2>
-    <div style="font-size:.8rem;color:#8b949e;margin-bottom:12px">
-      Нажимай на героев чтобы отметить их как "не подозреваемых". Сохраняется в браузере.
+  <!-- Spy hero board (visible only to spy) -->
+  <div id="spySection" style="display:none;width:100%">
+    <div class="spy-toolbar">
+      <div class="spy-title">🕵️ Отсеивай героев тапом. Нашёл загаданного — жми «Угадать» и выбери его.</div>
+      <div class="spy-actions">
+        <button class="btn btn-primary" id="guessBtn" onclick="toggleGuessMode()">🎯 Угадать персонажа</button>
+        <button class="btn btn-secondary" onclick="clearSpyNotes()">🗑️ Сбросить отметки</button>
+      </div>
+      <div class="guess-hint" id="guessHint" style="display:none">Режим угадывания: нажатие по герою — это финальный выбор!</div>
     </div>
-    <div class="hero-grid" id="spyNotesGrid"></div>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="btn btn-secondary" onclick="clearSpyNotes()">🗑️ Очистить все</button>
-      <button class="btn btn-secondary" onclick="toggleCrossedMode()" id="crossedModeBtn">✅ Режим зачёркивания</button>
-    </div>
+    <div class="hero-board" id="heroBoard"></div>
+  </div>
+
+  <!-- Speaking order (random each game) -->
+  <div class="card so-card" style="max-width:600px;width:100%">
+    <h2>🎙️ Очередь разговора (случайная)</h2>
+    <ol id="speakingOrderList" class="speaking-order"></ol>
   </div>
 
   <!-- Players + vote buttons -->
@@ -104,10 +110,10 @@
 <script>
 // Try to get game data from sessionStorage or wait for rejoin
 let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
-let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer;
+let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer, speakingOrder = [];
 
 if (gameData) {
-  ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer } = gameData);
+  ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer, speakingOrder = [] } = gameData);
 } else {
   // Wait for rejoin message
   console.log('Waiting for rejoin data from server...');
@@ -141,10 +147,24 @@ function renderVotePlayers() {
   vp.appendChild(self);
 }
 
+function renderSpeakingOrder() {
+  const list = document.getElementById('speakingOrderList');
+  if (!list) return;
+  const order = (speakingOrder && speakingOrder.length) ? speakingOrder : (players || []);
+  list.innerHTML = '';
+  order.forEach((p, i) => {
+    const li = document.createElement('li');
+    li.className = 'so-item' + (p.id === myId ? ' me' : '');
+    li.innerHTML = `<span class="so-num">${i + 1}</span><span class="so-name">${p.name}${p.id === myId ? ' (ты)' : ''}</span>`;
+    list.appendChild(li);
+  });
+}
+
 function initGameUI() {
   renderVotePlayers();
+  renderSpeakingOrder();
   if (role === 'spy') {
-    document.getElementById('spyNotesSection').style.display = '';
+    document.getElementById('spySection').style.display = '';
     initSpyNotes();
   }
   if (!isHost) document.getElementById('timerControls').style.display = 'none';
@@ -167,19 +187,60 @@ if (gameData) {
 }
 
 // ── Spy notes functions
+const ATTR_GROUPS = [
+  { key: 'str', label: 'Сила',      cls: 'attr-str' },
+  { key: 'agi', label: 'Ловкость',  cls: 'attr-agi' },
+  { key: 'int', label: 'Интеллект', cls: 'attr-int' },
+  { key: 'all', label: 'Универсал', cls: 'attr-all' },
+];
+let guessMode = false;
+
 function initSpyNotes() {
-  const grid = document.getElementById('spyNotesGrid');
-  grid.innerHTML = '';
-  
-  HEROES.forEach(h => {
-    const tile = document.createElement('div');
-    tile.className = 'hero-tile' + (crossedHeroes.has(h.name) ? ' crossed' : '') + (crossedMode ? ' crossed-mode' : '');
-    tile.title = crossedHeroes.has(h.name) ? `${h.name} — зачёркнут` : h.name;
-    tile.innerHTML = `<img src="${h.img}" loading="lazy" alt="${h.name}"><div class="h-name">${h.name}</div>`;
-    
-    tile.addEventListener('click', () => toggleCrossedHero(h.name, tile));
-    grid.appendChild(tile);
+  const board = document.getElementById('heroBoard');
+  board.innerHTML = '';
+  ATTR_GROUPS.forEach(g => {
+    const list = HEROES.filter(h => (h.attr || 'all') === g.key);
+    if (!list.length) return;
+    const grp = document.createElement('div');
+    grp.className = 'hero-group ' + g.cls;
+    grp.innerHTML = `<div class="hero-group-title">${g.label} · ${list.length}</div>`;
+    const row = document.createElement('div');
+    row.className = 'hero-row';
+    list.forEach(h => {
+      const tile = document.createElement('div');
+      tile.className = 'hero-cell' + (crossedHeroes.has(h.name) ? ' crossed' : '');
+      tile.title = h.name;
+      tile.innerHTML = `<img src="${h.img}" loading="lazy" alt="${h.name}">`;
+      tile.addEventListener('click', () => onHeroTap(h, tile));
+      row.appendChild(tile);
+    });
+    grp.appendChild(row);
+    board.appendChild(grp);
   });
+}
+
+function onHeroTap(h, tile) {
+  if (guessMode) { submitGuess(h); return; }
+  toggleCrossedHero(h.name, tile);
+}
+
+function toggleGuessMode() {
+  guessMode = !guessMode;
+  const btn = document.getElementById('guessBtn');
+  btn.classList.toggle('active', guessMode);
+  btn.textContent = guessMode ? '✖ Отменить угадывание' : '🎯 Угадать персонажа';
+  document.getElementById('guessHint').style.display = guessMode ? '' : 'none';
+  document.getElementById('heroBoard').classList.toggle('guessing', guessMode);
+}
+
+function submitGuess(h) {
+  if (!confirm(`Финальная догадка — «${h.name}»?\nУгадал → победа шпиона, ошибся → поражение.`)) return;
+  guessMode = false;
+  document.getElementById('heroBoard').classList.remove('guessing');
+  const btn = document.getElementById('guessBtn');
+  if (btn) { btn.classList.remove('active'); btn.textContent = '🎯 Угадать персонажа'; }
+  document.getElementById('guessHint').style.display = 'none';
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'spy_guess', heroName: h.name }));
 }
 
 let saveSpyNotesTimeout = null;
@@ -193,36 +254,10 @@ function toggleCrossedHero(heroName, tile) {
   } else {
     crossedHeroes.add(heroName);
     tile.classList.add('crossed');
-    tile.title = `${heroName} — зачёркнут`;
+    tile.title = `${heroName} — отсеян`;
   }
-  
-  // Update crossed mode visual
-  if (crossedMode) {
-    tile.classList.add('crossed-mode');
-  } else {
-    tile.classList.remove('crossed-mode');
-  }
-  
-  // Debounced save to server
   clearTimeout(saveSpyNotesTimeout);
-  saveSpyNotesTimeout = setTimeout(() => {
-    saveSpyNotes();
-  }, SAVE_DEBOUNCE_TIME);
-}
-
-function toggleCrossedMode() {
-  crossedMode = !crossedMode;
-  const btn = document.getElementById('crossedModeBtn');
-  btn.textContent = crossedMode ? '❌ Режим обычный' : '✅ Режим зачёркивания';
-  
-  const tiles = document.querySelectorAll('#spyNotesGrid .hero-tile');
-  tiles.forEach(tile => {
-    if (crossedMode) {
-      tile.classList.add('crossed-mode');
-    } else {
-      tile.classList.remove('crossed-mode');
-    }
-  });
+  saveSpyNotesTimeout = setTimeout(saveSpyNotes, SAVE_DEBOUNCE_TIME);
 }
 
 function clearSpyNotes() {
@@ -278,6 +313,7 @@ function handle(msg) {
   if (msg.type === 'vote_started')  onVoteStarted(msg);
   if (msg.type === 'vote_update')   onVoteUpdate(msg);
   if (msg.type === 'vote_result')   onVoteResult(msg);
+  if (msg.type === 'guess_result')  onGuessResult(msg);
   if (msg.type === 'error')         { 
     document.getElementById('voteErr').textContent = msg.text; 
     setTimeout(()=>document.getElementById('voteErr').textContent='',3000); 
@@ -483,6 +519,26 @@ function onVoteResult(msg) {
   document.getElementById('resultEmoji').textContent = emoji;
   document.getElementById('resultTitle').textContent = title;
   document.getElementById('resultSub').textContent   = sub;
+  document.getElementById('resultOverlay').classList.remove('hidden');
+}
+
+function onGuessResult(msg) {
+  voteActive = false;
+  document.getElementById('voteModal').classList.add('hidden');
+  const secret = (msg.secretHero && msg.secretHero.name) || '???';
+  let emoji, title, sub;
+  if (msg.correct) {
+    emoji = '🕵️';
+    title = 'Шпион угадал!';
+    sub = `${msg.spyName} назвал «${msg.guess}» — верно! Загадан был ${secret}. Шпион побеждает.`;
+  } else {
+    emoji = '🎉';
+    title = 'Мирные победили!';
+    sub = `${msg.spyName} назвал «${msg.guess}», но загадан был ${secret}. Шпион ошибся — мирные выигрывают.`;
+  }
+  document.getElementById('resultEmoji').textContent = emoji;
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultSub').textContent = sub;
   document.getElementById('resultOverlay').classList.remove('hidden');
 }
 

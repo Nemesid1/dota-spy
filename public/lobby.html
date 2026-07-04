@@ -68,6 +68,9 @@
     <div class="hero-grid" id="heroGrid"></div>
   </div>
 
+  <!-- Мой статус готовности -->
+  <div id="readyBanner" class="ready-banner off" style="max-width:520px;width:100%;display:none">⏳ Ты ещё не готов</div>
+
   <!-- Actions -->
   <div class="controls" style="max-width:520px;width:100%">
     <button class="btn btn-secondary" id="btnReady" onclick="toggleReady()">✅ Готов</button>
@@ -83,6 +86,7 @@
   const myCode = sessionStorage.getItem('dotaspy_code');
   if (!myCode || !myId) { location.href = 'index.html'; }
   let isHost   = false;
+  let myReady  = false;
   let ws;
   let connHandle = null;
   let hasConnectedOnce = false;
@@ -233,16 +237,24 @@
     list.innerHTML = '';
     state.players.forEach(p => {
       const row = document.createElement('div');
-      row.className = 'player-row';
+      const isMe = p.id === getMyId();
+      const isRoomHost = p.id === state.hostId;
+      const ready = isRoomHost || p.ready; // хост всегда готов
+      row.className = 'player-row' + (isMe ? ' me' : '') + (ready ? ' is-ready' : '');
       const badges = [];
-      if (p.id === state.hostId) badges.push('<span class="badge badge-host">Хост</span>');
-      if (p.id === getMyId())    badges.push('<span class="badge" style="background:#30363d;color:#e8a838">Ты</span>');
-      else if (p.id !== state.hostId) badges.push(p.ready
-        ? '<span class="badge badge-ready">Готов</span>'
-        : '<span class="badge badge-waiting">Ждёт</span>');
+      if (isRoomHost) badges.push('<span class="badge badge-host">Хост</span>');
+      if (isMe)       badges.push('<span class="badge badge-you">Ты</span>');
+      badges.push(ready
+        ? '<span class="badge badge-ready">✅ Готов</span>'
+        : '<span class="badge badge-waiting">⏳ Ждёт</span>');
       row.innerHTML = `<span class="p-name">${p.name}</span>${badges.join('')}`;
       list.appendChild(row);
     });
+
+    // Мой статус готовности — наглядно
+    const me = state.players.find(p => p.id === getMyId());
+    myReady = isHost || !!(me && me.ready);
+    updateReadyUI();
   }
 
   function sendSettings() {
@@ -254,8 +266,24 @@
     }}));
   }
 
+  function updateReadyUI() {
+    const btn = document.getElementById('btnReady');
+    const banner = document.getElementById('readyBanner');
+    if (btn) {
+      btn.textContent = myReady ? '✅ Ты готов — нажми чтобы отменить' : '☐ Нажми «Готов»';
+      btn.classList.toggle('btn-ready-on', myReady);
+    }
+    if (banner) {
+      banner.style.display = isHost ? 'none' : '';
+      banner.className = 'ready-banner ' + (myReady ? 'on' : 'off');
+      banner.textContent = myReady ? '✅ Ты готов к игре' : '⏳ Ты ещё не готов';
+    }
+  }
+
   function toggleReady() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    myReady = !myReady; // оптимистично
+    updateReadyUI();
     ws.send(JSON.stringify({ type: 'ready' }));
   }
 

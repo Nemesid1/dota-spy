@@ -239,3 +239,64 @@ input[type=range] { width: 100%; accent-color: #c84b31; }
   color: #e0e0e0;
   font-size: .9rem;
 }
+
+/* ══════════ Доработки: готовность, сетка героев, очередь ══════════ */
+
+/* № 1 — статус готовности в лобби */
+.player-row.me { border-color: #e8a838; }
+.player-row.is-ready { box-shadow: inset 3px 0 0 #238636; }
+.badge-you { background: #30363d; color: #e8a838; }
+.btn-ready-on { background: #238636 !important; color: #fff; border-color: #238636 !important; }
+.ready-banner { border-radius: 10px; padding: 12px; text-align: center; font-weight: 700; font-size: .95rem; }
+.ready-banner.on  { background: #0f2b17; border: 1px solid #238636; color: #3fbf6f; }
+.ready-banner.off { background: #2b1f0f; border: 1px solid #e8a838; color: #e8a838; }
+
+/* № 4 — рандомная очередь разговора */
+.so-card ol.speaking-order { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 0; }
+.so-item { display: flex; align-items: center; gap: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px; }
+.so-item.me { border-color: #e8a838; }
+.so-num { width: 24px; height: 24px; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; background: #c84b31; color: #fff; border-radius: 50%; font-weight: 800; font-size: .8rem; }
+.so-name { font-weight: 600; }
+.so-item.me .so-name { color: #e8a838; }
+
+/* № 3 — полноэкранная сетка героев шпиона, сгруппированная по атрибутам */
+.spy-toolbar {
+  width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+  padding: 12px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px;
+  position: sticky; top: 0; z-index: 10;
+}
+.spy-title { font-size: .85rem; color: #8b949e; }
+.spy-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.spy-actions .btn { width: auto; flex: 0 0 auto; }
+.guess-hint { color: #e8a838; font-size: .85rem; font-weight: 700; }
+#guessBtn.active { background: linear-gradient(135deg, #e8a838, #b8801a); color: #1a1206; }
+
+.hero-board { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+.hero-group-title {
+  font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px;
+  margin-bottom: 6px; padding-left: 8px; border-left: 4px solid;
+}
+.attr-str .hero-group-title { color: #e8623a; border-color: #e8623a; }
+.attr-agi .hero-group-title { color: #3fbf6f; border-color: #3fbf6f; }
+.attr-int .hero-group-title { color: #4aa3e0; border-color: #4aa3e0; }
+.attr-all .hero-group-title { color: #c86bde; border-color: #c86bde; }
+
+.hero-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 3px; }
+.hero-cell {
+  position: relative; aspect-ratio: 1; border-radius: 4px; overflow: hidden; cursor: pointer;
+  border: 2px solid transparent; transition: transform .1s, border-color .1s;
+}
+.hero-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero-cell:hover { transform: scale(1.1); z-index: 2; border-color: #e8a838; }
+.hero-cell.crossed img { filter: grayscale(100%) brightness(.35); }
+.hero-cell.crossed::after {
+  content: '✕'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #c84b31; font-size: 1.5rem; font-weight: 900; text-shadow: 0 0 5px #000;
+}
+/* режим угадывания */
+.hero-board.guessing .hero-cell { cursor: crosshair; }
+.hero-board.guessing .hero-cell:hover { border-color: #e8a838; box-shadow: 0 0 0 2px #e8a838, 0 0 12px #e8a838; transform: scale(1.15); }
+
+@media (max-width: 600px) {
+  .hero-row { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 2px; }
+}

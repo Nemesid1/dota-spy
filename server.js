@@ -186,6 +186,11 @@ function buildGameAssignment(room, player, roomCode) {
     location: isSpy ? null : hero,
     time: room.settings.time,
     players: room.players.map(x => ({ id: x.id, name: x.name })),
+    // Рандомная очередь разговора — фиксируется один раз за игру
+    speakingOrder: (room.speakingOrder || room.players.map(x => x.id))
+      .map(id => room.players.find(x => x.id === id))
+      .filter(Boolean)
+      .map(x => ({ id: x.id, name: x.name })),
     myId: player.id,
     spyNotes: isSpy ? getSpyNotes(roomCode, player.id) : [],
     hostId: room.hostId,
@@ -399,7 +404,10 @@ wss.on('connection', ws => {
       const spyIds = new Set(indices.slice(0, spyCount).map(i => room.players[i].id));
 
       room.started = true;
+      room.finished = false;
       room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
+      // Рандомная очередь разговора на эту игру
+      room.speakingOrder = room.players.map(p => p.id).sort(() => Math.random() - .5);
       room.players.forEach(p => {
         p.role = spyIds.has(p.id) ? 'spy' : 'civilian';
         p.usedVote = false;
@@ -421,7 +429,7 @@ wss.on('connection', ws => {
     // ── start vote
     else if (msg.type === 'vote_start') {
       const room = rooms[myRoom];
-      if (!room || !room.started) return;
+      if (!room || !room.started || room.finished) return;
       const initiator = room.players.find(p => p.id === myId);
       if (!initiator || initiator.usedVote) {
         ws.send(JSON.stringify({ type: 'error', text: 'Ты уже запускал голосование!' }));
@@ -482,15 +490,49 @@ wss.on('connection', ws => {
       ws.send(JSON.stringify({ type: 'spy_notes_cleared' }));
     }
 
+    // ── spy guess (шпион угадывает загаданного героя)
+    else if (msg.type === 'spy_guess') {
+      const room = rooms[myRoom];
+      if (!room || !room.started || room.finished) return;
+      const player = room.players.find(p => p.id === myId);
+      if (!player || player.role !== 'spy') {
+        ws.send(JSON.stringify({ type: 'error', text: 'Угадывать может только шпион!' }));
+        return;
+      }
+      if (room.vote && !room.vote.resolved) {
+        ws.send(JSON.stringify({ type: 'error', text: 'Дождись окончания голосования!' }));
+        return;
+      }
+      const secret = room.secretHero && room.secretHero.name;
+      const guess = msg.heroName;
+      const correct = !!secret && guess === secret;
+      room.finished = true;
+      if (room.vote) room.vote.resolved = true;
+      broadcast(myRoom, {
+        type: 'guess_result',
+        guess,
+        correct,
+        secretHero: room.secretHero || null,
+        spyId: myId,
+        spyName: player.name,
+        winner: correct ? 'spy' : 'civilians',
+        spyIds: room.players.filter(p => p.role === 'spy').map(p => p.id),
+      });
+    }
+
     // ── restart
     else if (msg.type === 'restart') {
       const room = rooms[myRoom];
       if (!room || room.hostId !== myId) return;
       room.started = false;
+      room.finished = false;
       room.secretHero = null;
+      room.speakingOrder = null;
+      room.vote = null;
       room.players.forEach(p => {
         p.ready = p.id === room.hostId;
         p.role = null;
+        p.usedVote = false;
         p.gameAssignment = null;
       });
       broadcast(myRoom, roomState(myRoom));

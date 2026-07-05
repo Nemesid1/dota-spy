@@ -35,6 +35,15 @@ const clients = {}; // ws -> { roomCode, playerId }
 function makeCode() {
   return Math.random().toString(36).slice(2,6).toUpperCase();
 }
+// Честное перемешивание (Фишер–Йейтс). Array.sort(()=>Math.random()-.5) смещён, особенно на малых n.
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 function makePlayerId(room) {
   const used = new Set(room.players.map(p => p.id));
   let n = 1;
@@ -80,6 +89,7 @@ function finishRound(roomCode, resultMsg) {
 // План подсказок в % от общего времени раунда. Шпион может назвать героя в любой
 // момент -> расписание сдвинуто позже. Роль/позицию не даём — только тип атаки, затем атрибут.
 function buildHintPlan(room, poolHeroes) {
+  if (room.settings.hintsEnabled === false) return []; // хост выключил подсказки
   const minutes = room.settings.time;
   const totalSec = room.settings.time * 60;
   let n;
@@ -415,7 +425,7 @@ wss.on('connection', ws => {
       rooms[code] = {
         hostId: myId,
         players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId, score: 0 }],
-        settings: { multipleSpies: false, catchButNotLost: false, attrMode: 'any', time: 8, maxPlayers: 4 },
+        settings: { multipleSpies: false, catchButNotLost: false, attrMode: 'any', hintsEnabled: true, time: 8, maxPlayers: 4 },
         started: false,
         reconnectGrace: {},
       };
@@ -565,6 +575,7 @@ wss.on('connection', ws => {
         multipleSpies: !!next.multipleSpies,
         catchButNotLost: !!next.catchButNotLost,
         attrMode: ['any','str','agi','int','all'].includes(next.attrMode) ? next.attrMode : (room.settings.attrMode || 'any'),
+        hintsEnabled: typeof next.hintsEnabled === 'boolean' ? next.hintsEnabled : (room.settings.hintsEnabled !== false),
         time: clamp(next.time, 4, 20, room.settings.time || 8),
       };
       broadcast(myRoom, roomState(myRoom));
@@ -635,7 +646,7 @@ wss.on('connection', ws => {
       const spyCount = room.settings.multipleSpies ? (1 + Math.floor(Math.random() * maxSpies)) : 1;
       room.actualSpyCount = spyCount;
 
-      const indices = [...Array(n).keys()].sort(() => Math.random() - .5);
+      const indices = shuffle([...Array(n).keys()]);
       const spyIds = new Set(indices.slice(0, spyCount).map(i => room.players[i].id));
 
       room.started = true;
@@ -643,7 +654,7 @@ wss.on('connection', ws => {
       room.pendingRedemption = null;
       room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
       // Рандомная очередь разговора на эту игру
-      room.speakingOrder = room.players.map(p => p.id).sort(() => Math.random() - .5);
+      room.speakingOrder = shuffle(room.players.map(p => p.id));
       room.players.forEach(p => {
         p.role = spyIds.has(p.id) ? 'spy' : 'civilian';
         p.usedVote = false;

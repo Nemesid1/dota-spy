@@ -150,6 +150,24 @@
           </select>
           <p class="setting-note" id="attrModeHint">Загаданный герой берётся из всех классов.</p>
         </article>
+
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Zm-3 17h6v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1Z"/></svg>
+            </span>
+            <div>
+              <label for="hintsToggle">Подсказки шпиону</label>
+              <strong id="hintsModeTitle">Включены</strong>
+            </div>
+          </div>
+          <label class="toggle-card">
+            <input type="checkbox" id="hintsToggle" checked onchange="updateLocalSettingLabels();sendSettings()"/>
+            <span class="switch" aria-hidden="true"></span>
+            <span>Таймерные срезы по атаке/атрибуту</span>
+          </label>
+          <p class="setting-note" id="hintsModeHint">Отстающий шпион во второй половине раунда получит грубые срезы.</p>
+        </article>
       </div>
 
       <section class="lobby-briefing" aria-label="Брифинг партии">
@@ -415,6 +433,7 @@
       document.getElementById('multiSpyToggle').checked = !!state.settings.multipleSpies;
       document.getElementById('catchToggle').checked = !!state.settings.catchButNotLost;
       document.getElementById('attrModeSelect').value = state.settings.attrMode || 'any';
+      document.getElementById('hintsToggle').checked = state.settings.hintsEnabled !== false;
       updateLocalSettingLabels();
     }
 
@@ -541,6 +560,10 @@
     const attrNames = { any: 'Все атрибуты', str: 'Только Сила', agi: 'Только Ловкость', int: 'Только Интеллект', all: 'Только Универсал' };
     setText('attrModeTitle', attrNames[av] || 'Все атрибуты');
     setText('attrModeHint', av === 'any' ? 'Загаданный герой берётся из всех классов.' : 'Загаданный герой и сетка шпиона — только выбранного класса.');
+    const hintsEl = document.getElementById('hintsToggle');
+    const hintsOn = hintsEl ? hintsEl.checked : true;
+    setText('hintsModeTitle', hintsOn ? 'Включены' : 'Выключены');
+    setText('hintsModeHint', hintsOn ? 'Отстающий шпион во второй половине раунда получит грубые срезы (сначала тип атаки, затем атрибут).' : 'Подсказки выключены — шпион ориентируется только на разговор.');
   }
 
   function sendSettings() {
@@ -550,6 +573,7 @@
       multipleSpies: document.getElementById('multiSpyToggle').checked,
       catchButNotLost: document.getElementById('catchToggle').checked,
       attrMode: document.getElementById('attrModeSelect').value,
+      hintsEnabled: document.getElementById('hintsToggle').checked,
       time: parseInt(document.getElementById('timeRange').value, 10),
     }}));
   }

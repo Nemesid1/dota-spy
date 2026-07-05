@@ -4,9 +4,16 @@
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Игра — Дота-Шпион</title>
   <link rel="stylesheet" href="style.css"/>
+  <style>
+    .result-scores{margin-top:14px;text-align:left;display:flex;flex-direction:column;gap:4px;max-height:38vh;overflow:auto}
+    .result-scores .scores-title{font-size:.72rem;letter-spacing:1px;text-transform:uppercase;color:#8b949e;margin-bottom:4px}
+    .result-scores .score-row{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid #2b2f36}
+    .result-scores .score-row.me{border-color:#e8a838;color:#e8a838}
+    .result-scores .score-row strong{color:#e8a838}
+    .badge.badge-score{background:#3a2d0a;color:#e8a838;border:1px solid #e8a838}
+  </style>
 </head>
 <body>
-<!-- Loading overlay -->
 <div class="loading-overlay" id="loadingOverlay">
   <div class="loading-spinner"></div>
   <div class="loading-text">Подключение к игре...</div>
@@ -134,7 +141,6 @@
   </div>
 </div>
 
-<!-- ── VOTE MODAL ── -->
 <div class="modal-overlay hidden" id="voteModal">
   <div class="modal">
     <div class="modal-title" id="voteTitle">Голосование</div>
@@ -152,12 +158,12 @@
   </div>
 </div>
 
-<!-- ── RESULT OVERLAY ── -->
 <div class="modal-overlay hidden" id="resultOverlay">
   <div class="modal">
     <div style="font-size:3rem" id="resultEmoji">🏆</div>
     <div class="modal-title" id="resultTitle"></div>
     <div class="modal-sub" id="resultSub"></div>
+    <div class="result-scores" id="resultScores"></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:center">
       <button class="btn btn-primary" id="btnResultNewGame" data-host-only="true" onclick="newGame()">🔄 Новая игра</button>
     </div>
@@ -175,13 +181,11 @@ function appConfirm({ title = 'Подтвердить действие', message
     const ok = document.getElementById('confirmOk');
     const cancel = document.getElementById('confirmCancel');
     if (!overlay || !ok || !cancel) { resolve(false); return; }
-
     titleEl.textContent = title;
     textEl.textContent = message;
     ok.textContent = okText;
     ok.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
     overlay.classList.remove('hidden');
-
     const cleanup = result => {
       overlay.classList.add('hidden');
       ok.removeEventListener('click', onOk);
@@ -199,25 +203,20 @@ function appConfirm({ title = 'Подтвердить действие', message
   });
 }
 
-// Try to get game data from sessionStorage or wait for rejoin
 let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
 let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer, speakingOrder = [];
-
 if (gameData) {
   ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer, speakingOrder = [] } = gameData);
 } else {
-  // Wait for rejoin message
   console.log('Waiting for rejoin data from server...');
 }
 let usedVote = false;
 let voteActive = false;
 let iHaveVoted = false;
 
-// Spy notes
 const crossedHeroes = new Set(initialSpyNotes);
 let crossedMode = false;
 
-// Группы героев по атрибутам + режим угадывания (объявлено до initGameUI!)
 const ATTR_GROUPS = [
   { key: 'str', label: 'Сила',      cls: 'attr-str' },
   { key: 'agi', label: 'Ловкость',  cls: 'attr-agi' },
@@ -226,8 +225,6 @@ const ATTR_GROUPS = [
 ];
 let guessMode = false;
 
-
-// ── Players vote list
 function renderVotePlayers() {
   if (!players) return;
   const vp = document.getElementById('votePlayers');
@@ -293,7 +290,6 @@ function initGameUI() {
   renderTimer();
 }
 
-// ── Timer
 let totalSec = (time || 8) * 60;
 let remaining = initialTimer ?? totalSec;
 let running = false;
@@ -308,7 +304,6 @@ if (gameData) {
   document.getElementById('gamePage').style.display = 'none';
 }
 
-// ── Spy notes functions
 function initSpyNotes() {
   const board = document.getElementById('heroBoard');
   board.innerHTML = '';
@@ -359,7 +354,7 @@ async function submitGuess(h) {
 }
 
 let saveSpyNotesTimeout = null;
-const SAVE_DEBOUNCE_TIME = 1000; // 1 second
+const SAVE_DEBOUNCE_TIME = 1000;
 
 function toggleCrossedHero(heroName, tile) {
   if (crossedHeroes.has(heroName)) {
@@ -378,60 +373,39 @@ function toggleCrossedHero(heroName, tile) {
 async function clearSpyNotes() {
   if (!(await appConfirm({ title: 'Сбросить отметки', message: 'Все зачёркнутые герои снова станут активными на доске.', okText: 'Сбросить', danger: true }))) return;
   crossedHeroes.clear();
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'spy_notes_clear' }));
-  }
+  if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: 'spy_notes_clear' })); }
   initSpyNotes();
 }
 
 function saveSpyNotes() {
   if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ 
-      type: 'spy_notes_update', 
-      crossedHeroes: [...crossedHeroes] 
-    }));
+    ws.send(JSON.stringify({ type: 'spy_notes_update', crossedHeroes: [...crossedHeroes] }));
   }
 }
 
 function handle(msg) {
   console.log('WebSocket message:', msg.type, msg);
-  
   if (msg.type === 'rejoined') {
     if (msg.gameData) {
       sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));
-      // Перезагрузка только если зашли без данных (обновление страницы посреди игры)
       if (!gameData) location.reload();
       return;
     }
-    if (msg.roomState && !msg.roomState.started) {
-      location.href = 'lobby.html';
-      return;
-    }
+    if (msg.roomState && !msg.roomState.started) { location.href = 'lobby.html'; return; }
     return;
   }
-  
-  if (msg.type === 'timer') { 
-    remaining = msg.remaining; 
-    renderTimer(); 
-  }
+  if (msg.type === 'timer') { remaining = msg.remaining; renderTimer(); }
   if (msg.type === 'room_state') {
-    if (!msg.started) { 
-      location.href = 'lobby.html'; 
-    } else {
-      // Update timer if available
-      if (msg.timer && msg.timer.remaining) {
-        remaining = msg.timer.remaining;
-        renderTimer();
-      }
-    }
+    if (!msg.started) { location.href = 'lobby.html'; }
+    else { if (msg.timer && msg.timer.remaining) { remaining = msg.timer.remaining; renderTimer(); } }
   }
   if (msg.type === 'vote_started')  onVoteStarted(msg);
   if (msg.type === 'vote_update')   onVoteUpdate(msg);
   if (msg.type === 'vote_result')   onVoteResult(msg);
   if (msg.type === 'guess_result')  onGuessResult(msg);
-  if (msg.type === 'error')         { 
-    document.getElementById('voteErr').textContent = msg.text; 
-    setTimeout(()=>document.getElementById('voteErr').textContent='',3000); 
+  if (msg.type === 'error') {
+    document.getElementById('voteErr').textContent = msg.text;
+    setTimeout(()=>document.getElementById('voteErr').textContent='',3000);
   }
   if (msg.type === 'spy_notes_saved') { console.log('Spy notes saved to server'); }
   if (msg.type === 'spy_notes_cleared') { console.log('Spy notes cleared on server'); }
@@ -445,12 +419,9 @@ function updateConnectionStatus(status, text) {
   const statusEl = document.getElementById('connectionStatus');
   const textEl = document.getElementById('connectionText');
   const dotEl = statusEl.querySelector('.connection-dot');
-  
   statusEl.className = `connection-status ${status}`;
   dotEl.className = `connection-dot ${status}`;
   textEl.textContent = text;
-  
-  // Hide loading overlay when connected
   if (status === 'connected') {
     document.getElementById('loadingOverlay').style.display = 'none';
     document.getElementById('gamePage').style.display = 'flex';
@@ -459,7 +430,6 @@ function updateConnectionStatus(status, text) {
 
 function connect() {
   updateConnectionStatus('connecting', 'Подключение...');
-
   connectWithRetry({
     maxAttempts: 12,
     onStatus: text => updateConnectionStatus('connecting', text || 'Подключение...'),
@@ -467,12 +437,10 @@ function connect() {
       ws = socket;
       reconnectAttempts = 0;
       updateConnectionStatus('connected', 'Подключено');
-
       const code = sessionStorage.getItem('dotaspy_code');
       const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
       ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId, clientId: (function(){let i=localStorage.getItem('dotaspy_client_id'); if(!i){i='c_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('dotaspy_client_id',i);} return i;})() }));
-
       if (role === 'spy' && crossedHeroes.size > 0) {
         setTimeout(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -496,10 +464,7 @@ function connect() {
   });
 }
 
-// Initialize connection after page loads
-window.addEventListener('load', () => {
-  connect();
-});
+window.addEventListener('load', () => { connect(); });
 
 function fmt(s) { return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
 function renderTimer() {
@@ -530,7 +495,6 @@ function resetTimer() {
   document.getElementById('btnStartStop').textContent = '▶ Старт';
 }
 
-// ── Role reveal
 let revealed = false;
 function revealRole() {
   if (revealed) return;
@@ -580,7 +544,6 @@ function revealRole() {
   document.getElementById('tapCard').style.cursor = 'default';
 }
 
-// ── Voting
 async function startVote(targetId, targetName) {
   if (usedVote) { document.getElementById('voteErr').textContent = 'Ты уже использовал своё голосование!'; return; }
   if (!(await appConfirm({ title: 'Начать голосование', message: `Запустить голосование за кик игрока "${targetName}"?`, okText: 'Начать', danger: true }))) return;
@@ -597,7 +560,7 @@ function onVoteStarted(msg) {
   document.getElementById('voteBtns').style.display = isInitiator ? 'none' : '';
   document.getElementById('voteWaiting').style.display = isInitiator ? '' : 'none';
   document.getElementById('voteModal').classList.remove('hidden');
-  renderVotePlayers(); // disable buttons
+  renderVotePlayers();
 }
 
 function onVoteUpdate(msg) {
@@ -627,36 +590,72 @@ function castVote(yes) {
   document.getElementById('voteWaiting').textContent = 'Твой голос учтён. Ждём остальных...';
 }
 
+function renderScores(scores) {
+  const box = document.getElementById('resultScores');
+  if (!box) return;
+  if (!scores || !scores.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="scores-title">Счёт серии</div>' +
+    scores.map((sc, i) => `<div class="score-row${sc.id === myId ? ' me' : ''}"><span>${i + 1}. ${sc.name}${sc.id === myId ? ' (ты)' : ''}</span><strong>${sc.score}</strong></div>`).join('');
+}
+
+function showResult({ emoji, title, sub, scores, showNewGame = true, autoHide = 0 }) {
+  document.getElementById('resultEmoji').textContent = emoji;
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultSub').textContent = sub;
+  renderScores(scores);
+  const btn = document.getElementById('btnResultNewGame');
+  if (btn) btn.style.display = (showNewGame && isHost) ? '' : 'none';
+  const overlay = document.getElementById('resultOverlay');
+  overlay.classList.remove('hidden');
+  if (autoHide) setTimeout(() => overlay.classList.add('hidden'), autoHide);
+}
+
+function enterRedemption() {
+  document.getElementById('voteModal').classList.add('hidden');
+  document.getElementById('resultOverlay').classList.add('hidden');
+  if (role !== 'spy') return;
+  document.getElementById('spySection').style.display = '';
+  guessMode = true;
+  const btn = document.getElementById('guessBtn');
+  if (btn) { btn.classList.add('active'); btn.textContent = 'Отменить догадку'; }
+  const hint = document.getElementById('guessHint');
+  if (hint) { hint.style.display = ''; hint.textContent = 'Тебя выгнали! ПОСЛЕДНИЙ ШАНС: выбери героя на доске — угадаешь, спасёшься.'; }
+  document.getElementById('heroBoard').classList.add('guessing');
+  const intelTitle = document.getElementById('intelTitle');
+  if (intelTitle) intelTitle.textContent = 'Последний шанс шпиона';
+  const sec = document.getElementById('spySection');
+  if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function onVoteResult(msg) {
   voteActive = false;
   document.getElementById('voteModal').classList.add('hidden');
-
-  // mark vote used for self if I was initiator
-  if (!usedVote) {
-    // server tracks it; reflect locally if we just voted
+  if (msg.redemption) {
+    if (msg.redemptionSpyId === myId) {
+      enterRedemption();
+    } else {
+      showResult({ emoji: '🕵️', title: 'Шпион пойман!', sub: 'Но у него есть последний шанс угадать общего героя. Ждём его ответ…', scores: msg.scores, showNewGame: false });
+    }
+    return;
   }
-
   let emoji, title, sub;
-
   if (!msg.kicked) {
     emoji = '🛡️';
     title = `${msg.targetName} остаётся!`;
-    sub   = `Большинство проголосовало ПРОТИВ кика. Игра продолжается.`;
+    sub   = 'Большинство проголосовало ПРОТИВ кика. Игра продолжается.';
+    showResult({ emoji, title, sub, scores: msg.scores, showNewGame: false, autoHide: 3500 });
+    return;
   } else if (msg.winner === 'civilians') {
     emoji = '🎉';
     title = 'Мирные победили!';
-    sub   = `${msg.targetName} был шпионом! Шпион разоблачён и изгнан.`;
+    sub   = `${msg.targetName} был шпионом! Инициатор голосования получает +2 очка.`;
   } else {
     emoji = '🕵️';
     title = 'Шпион победил!';
     const spyNames = msg.spyIds ? msg.spyIds.map(id => players.find(p=>p.id===id)?.name).join(', ') : 'неизвестно';
-    sub   = `${msg.targetName} был мирным! Невинного выгнали — шпион выиграл.\nШпионы: ${spyNames}`;
+    sub   = `${msg.targetName} был мирным! Невинного выгнали — шпион выиграл (+5).\nШпионы: ${spyNames}`;
   }
-
-  document.getElementById('resultEmoji').textContent = emoji;
-  document.getElementById('resultTitle').textContent = title;
-  document.getElementById('resultSub').textContent   = sub;
-  document.getElementById('resultOverlay').classList.remove('hidden');
+  showResult({ emoji, title, sub, scores: msg.scores });
 }
 
 function onGuessResult(msg) {
@@ -666,17 +665,18 @@ function onGuessResult(msg) {
   let emoji, title, sub;
   if (msg.correct) {
     emoji = '🕵️';
-    title = 'Шпион угадал!';
-    sub = `${msg.spyName} назвал «${msg.guess}» — верно! Загадан был ${secret}. Шпион побеждает.`;
+    title = msg.redemption ? 'Шпион спасся!' : 'Шпион угадал!';
+    sub = msg.redemption
+      ? `${msg.spyName} назвал «${msg.guess}» — верно! Загадан был ${secret}. Пойман, но не проиграл — шпион побеждает (+5)!`
+      : `${msg.spyName} назвал «${msg.guess}» — верно! Загадан был ${secret}. Шпион побеждает (+5).`;
   } else {
     emoji = '🎉';
     title = 'Мирные победили!';
-    sub = `${msg.spyName} назвал «${msg.guess}», но загадан был ${secret}. Шпион ошибся — мирные выигрывают.`;
+    sub = msg.redemption
+      ? `${msg.spyName} потратил последний шанс на «${msg.guess}», но загадан был ${secret}. Мимо — мирные выигрывают.`
+      : `${msg.spyName} назвал «${msg.guess}», но загадан был ${secret}. Шпион ошибся — мирные выигрывают (+1 каждому).`;
   }
-  document.getElementById('resultEmoji').textContent = emoji;
-  document.getElementById('resultTitle').textContent = title;
-  document.getElementById('resultSub').textContent = sub;
-  document.getElementById('resultOverlay').classList.remove('hidden');
+  showResult({ emoji, title, sub, scores: msg.scores });
 }
 
 function newGame() {

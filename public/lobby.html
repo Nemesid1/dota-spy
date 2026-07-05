@@ -4,6 +4,14 @@
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Лобби — Дота-Шпион</title>
   <link rel="stylesheet" href="style.css"/>
+  <style>
+    .result-scores{margin-top:14px;text-align:left;display:flex;flex-direction:column;gap:4px;max-height:38vh;overflow:auto}
+    .result-scores .scores-title{font-size:.72rem;letter-spacing:1px;text-transform:uppercase;color:#8b949e;margin-bottom:4px}
+    .result-scores .score-row{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid #2b2f36}
+    .result-scores .score-row.me{border-color:#e8a838;color:#e8a838}
+    .result-scores .score-row strong{color:#e8a838}
+    .badge.badge-score{background:#3a2d0a;color:#e8a838;border:1px solid #e8a838}
+  </style>
 </head>
 <body class="lobby-body">
 <div class="loading-overlay" id="loadingOverlay" style="display:none">
@@ -101,6 +109,24 @@
             </div>
           </div>
           <input type="range" id="timeRange" min="4" max="20" value="8" oninput="updateLocalSettingLabels();sendSettings()"/>
+        </article>
+
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm0 6a2 2 0 0 1 1.2 3.6V14h-2.4v-2.4A2 2 0 0 1 12 8Z"/></svg>
+            </span>
+            <div>
+              <label for="catchToggle">Пойман, но не проиграл</label>
+              <strong id="catchModeTitle">Выключено</strong>
+            </div>
+          </div>
+          <label class="toggle-card">
+            <input type="checkbox" id="catchToggle" onchange="updateLocalSettingLabels();sendSettings()"/>
+            <span class="switch" aria-hidden="true"></span>
+            <span>Последний шанс выгнанному шпиону</span>
+          </label>
+          <p class="setting-note" id="catchModeHint">Если выключено — выгнанный шпион сразу проигрывает.</p>
         </article>
       </div>
 
@@ -222,9 +248,7 @@
   let syncTimer = null;
   let lastState = null;
 
-  function getMyId() {
-    return sessionStorage.getItem('dotaspy_ws_id');
-  }
+  function getMyId() { return sessionStorage.getItem('dotaspy_ws_id'); }
 
   function getClientId() {
     let id = localStorage.getItem('dotaspy_client_id');
@@ -248,13 +272,11 @@
       const ok = document.getElementById('confirmOk');
       const cancel = document.getElementById('confirmCancel');
       if (!overlay || !ok || !cancel) { resolve(false); return; }
-
       titleEl.textContent = title;
       textEl.textContent = message;
       ok.textContent = okText;
       ok.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
       overlay.classList.remove('hidden');
-
       const cleanup = result => {
         overlay.classList.add('hidden');
         ok.removeEventListener('click', onOk);
@@ -292,7 +314,6 @@
       document.getElementById('loadingOverlay').style.display = 'flex';
       document.getElementById('lobbyPage').style.display = 'none';
     }
-
     connHandle = connectWithRetry({
       maxAttempts: 12,
       onStatus: text => updateConnectionStatus('connecting', text || 'Подключение к лобби...'),
@@ -302,7 +323,6 @@
         updateConnectionStatus('connected', 'Подключено');
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
         ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId: getMyId(), clientId: getClientId() }));
-
         clearInterval(syncTimer);
         syncTimer = setInterval(() => {
           if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'sync' }));
@@ -371,6 +391,7 @@
       document.getElementById('playerRange').value = state.settings.maxPlayers || 4;
       document.getElementById('timeRange').value = state.settings.time || 8;
       document.getElementById('multiSpyToggle').checked = !!state.settings.multipleSpies;
+      document.getElementById('catchToggle').checked = !!state.settings.catchButNotLost;
       updateLocalSettingLabels();
     }
 
@@ -442,6 +463,7 @@
       if (isRoomHost) badges.appendChild(makeBadge('Хост', 'badge-host'));
       if (isMe) badges.appendChild(makeBadge('Ты', 'badge-you'));
       badges.appendChild(makeBadge(ready ? 'Готов' : 'Ждёт', ready ? 'badge-ready' : 'badge-waiting'));
+      if (p.score) badges.appendChild(makeBadge('★ ' + p.score, 'badge-score'));
       row.appendChild(badges);
 
       if (isHost && !isMe) {
@@ -487,6 +509,10 @@
     const currentPlayers = lastState ? lastState.players.length : maxPlayers;
     const randomMax = Math.max(1, currentPlayers - 1);
     setText('spyModeHint', multi ? 'При старте выпадет от 1 до ' + randomMax + ' шпионов. Точное число не видно игрокам.' : 'В игре будет один шпион.');
+    const catchEl = document.getElementById('catchToggle');
+    const catchOn = catchEl && catchEl.checked;
+    setText('catchModeTitle', catchOn ? 'Включено' : 'Выключено');
+    setText('catchModeHint', catchOn ? 'Выгнанный шпион получит один финальный шанс угадать героя.' : 'Если выключено — выгнанный шпион сразу проигрывает.');
   }
 
   function sendSettings() {
@@ -494,6 +520,7 @@
     ws.send(JSON.stringify({ type: 'settings', settings: {
       maxPlayers: parseInt(document.getElementById('playerRange').value, 10),
       multipleSpies: document.getElementById('multiSpyToggle').checked,
+      catchButNotLost: document.getElementById('catchToggle').checked,
       time: parseInt(document.getElementById('timeRange').value, 10),
     }}));
   }
@@ -510,41 +537,6 @@
       banner.className = 'ready-banner ' + (myReady ? 'on' : 'off');
       banner.textContent = myReady ? 'Ты готов к игре' : 'Ты ещё не готов';
     }
-  }
-
-  function renderHeroGrid() {
-    const heroGrid = document.getElementById('heroGrid');
-    const stats = document.getElementById('heroStats');
-    if (!heroGrid || !stats) return;
-    const q = (document.getElementById('heroSearch')?.value || '').trim().toLowerCase();
-    heroGrid.innerHTML = '';
-    let shown = 0;
-    HEROES.forEach(h => {
-      if (q && !h.name.toLowerCase().includes(q)) return;
-      shown++;
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'hero-tile';
-      tile.title = h.name;
-      const img = document.createElement('img');
-      img.src = h.img;
-      img.loading = 'lazy';
-      img.alt = h.name;
-      const label = document.createElement('span');
-      label.className = 'h-name';
-      label.textContent = h.name;
-      tile.appendChild(img);
-      tile.appendChild(label);
-      tile.addEventListener('click', () => {
-        tile.classList.toggle('selected');
-      });
-      heroGrid.appendChild(tile);
-    });
-    stats.textContent = shown + ' из ' + HEROES.length;
-  }
-
-  function clearHeroDisabled() {
-    renderHeroGrid();
   }
 
   function toggleReady() {
@@ -605,7 +597,6 @@
     }).catch(() => setText('errMsg', code));
   }
 
-  document.getElementById('heroSearch')?.addEventListener('input', renderHeroGrid);
   window.addEventListener('load', connect);
 </script>
 </body>

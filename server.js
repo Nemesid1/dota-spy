@@ -50,6 +50,32 @@ function broadcast(roomCode, msg) {
   });
 }
 
+// ── SCORES ──
+function standings(room) {
+  return room.players
+    .map(p => ({ id: p.id, name: p.name, score: p.score || 0 }))
+    .sort((a, b) => b.score - a.score);
+}
+function addScore(room, id, pts) {
+  const p = room.players.find(x => x.id === id);
+  if (p) p.score = (p.score || 0) + pts;
+}
+// Шпиона выгнали голосованием: инициатор +2, остальные мирные +1, шпионы 0
+function awardKickSpy(room, initiatorId) {
+  const spyIds = new Set(room.players.filter(p => p.role === 'spy').map(p => p.id));
+  addScore(room, initiatorId, 2);
+  room.players.forEach(p => {
+    if (p.id !== initiatorId && !spyIds.has(p.id)) addScore(room, p.id, 1);
+  });
+}
+function finishRound(roomCode, resultMsg) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  room.finished = true;
+  room.pendingRedemption = null;
+  broadcast(roomCode, { ...resultMsg, scores: standings(room) });
+}
+
 // Spy notes functions
 function getSpyNotes(roomCode, playerId) {
   if (!spyNotes[roomCode]) spyNotes[roomCode] = {};
@@ -77,6 +103,7 @@ function roomState(roomCode) {
       id: p.id,
       name: p.name,
       ready: p.ready,
+      score: p.score || 0,
       online: !!(p.ws && p.ws.readyState === 1),
     })),
     settings: room.settings,
@@ -105,26 +132,48 @@ function checkVoteResult(roomCode) {
 
   room.vote.resolved = true;
   const kicked = yesCount >= needed;
-  let winner = null;
-
-  if (kicked) {
-    const target = room.players.find(p => p.id === room.vote.targetId);
-    if (target) {
-      winner = target.role === 'spy' ? 'civilians' : 'spy'; // kicked spy → civilians win; kicked innocent → spy wins
-    }
-  }
-
-  broadcast(roomCode, {
+  const target = room.players.find(p => p.id === room.vote.targetId);
+  const initiatorId = room.vote.initiatorId;
+  const spyIds = room.players.filter(p => p.role === 'spy').map(p => p.id);
+  const base = {
     type: 'vote_result',
-    kicked,
     targetId: room.vote.targetId,
     targetName: room.vote.targetName,
-    targetRole: room.players.find(p => p.id === room.vote.targetId)?.role,
-    winner, // 'civilians' | 'spy' | null (no kick)
+    targetRole: target ? target.role : null,
     yesCount,
     noCount,
-    spyIds: room.players.filter(p => p.role === 'spy').map(p => p.id),
-  });
+    spyIds,
+  };
+
+  // Большинство против — никого не выгнали, очки не начисляем
+  if (!kicked) {
+    broadcast(roomCode, { ...base, kicked: false, winner: null, scores: standings(room) });
+    return;
+  }
+
+  if (target && target.role === 'spy') {
+    // Поймали шпиона
+    if (room.settings.catchButNotLost) {
+      // «Пойман, но не проиграл» — даём шпиону последний шанс угадать
+      room.pendingRedemption = { spyId: target.id, initiatorId };
+      broadcast(roomCode, {
+        ...base, kicked: true, winner: null,
+        redemption: true, redemptionSpyId: target.id,
+        scores: standings(room),
+      });
+      return;
+    }
+    // Обычная поимка: инициатор +2, остальные мирные +1
+    awardKickSpy(room, initiatorId);
+    finishRound(roomCode, { ...base, kicked: true, winner: 'civilians' });
+    return;
+  }
+
+  // Выгнали мирного — шпион(ы) побеждают, +5 каждому шпиону
+  if (target) {
+    spyIds.forEach(id => addScore(room, id, 5));
+    finishRound(roomCode, { ...base, kicked: true, winner: 'spy' });
+  }
 }
 
 const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000;
@@ -165,6 +214,7 @@ function removePlayerImmediate(roomCode, playerId, { allowRejoin = false } = {})
       name: player.name,
       ready: player.ready,
       wasHost: room.hostId === playerId,
+      score: player.score || 0,
       expiresAt: Date.now() + RECONNECT_GRACE,
     };
   }
@@ -201,6 +251,8 @@ function buildGameAssignment(room, player, roomCode) {
     spyNotes: isSpy ? getSpyNotes(roomCode, player.id) : [],
     hostId: room.hostId,
     initialTimer: room.timer?.remaining || room.settings.time * 60,
+    scores: standings(room),
+    catchButNotLost: !!room.settings.catchButNotLost,
   };
 }
 
@@ -277,8 +329,8 @@ wss.on('connection', ws => {
       myId   = 'p1';
       rooms[code] = {
         hostId: myId,
-        players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId }],
-        settings: { multipleSpies: false, time: 8, maxPlayers: 4 },
+        players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId, score: 0 }],
+        settings: { multipleSpies: false, catchButNotLost: false, time: 8, maxPlayers: 4 },
         started: false,
         reconnectGrace: {},
       };
@@ -308,7 +360,7 @@ wss.on('connection', ws => {
       if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
       myRoom = code;
       myId   = makePlayerId(room);
-      room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
+      room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId, score: 0 });
       ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
       broadcast(code, roomState(code));
     }
@@ -369,6 +421,7 @@ wss.on('connection', ws => {
             ws,
             ready: grace.ready,
             clientId: msg.clientId,
+            score: grace.score || 0,
           });
           if (grace.wasHost) room.hostId = myId;
           clearTimeout(room._emptyTimer);
@@ -384,7 +437,7 @@ wss.on('connection', ws => {
           if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
           myRoom = code;
           myId   = makePlayerId(room);
-          room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
+          room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId, score: 0 });
           ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
           broadcast(code, roomState(code));
         }
@@ -425,6 +478,7 @@ wss.on('connection', ws => {
         ...room.settings,
         maxPlayers: Math.max(room.players.length, clamp(next.maxPlayers, 3, 12, room.settings.maxPlayers || 4)),
         multipleSpies: !!next.multipleSpies,
+        catchButNotLost: !!next.catchButNotLost,
         time: clamp(next.time, 4, 20, room.settings.time || 8),
       };
       broadcast(myRoom, roomState(myRoom));
@@ -491,6 +545,7 @@ wss.on('connection', ws => {
 
       room.started = true;
       room.finished = false;
+      room.pendingRedemption = null;
       room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
       // Рандомная очередь разговора на эту игру
       room.speakingOrder = room.players.map(p => p.id).sort(() => Math.random() - .5);
@@ -576,7 +631,7 @@ wss.on('connection', ws => {
       ws.send(JSON.stringify({ type: 'spy_notes_cleared' }));
     }
 
-    // ── spy guess (шпион угадывает загаданного героя)
+    // ── spy guess (шпион угадывает загаданного героя, в т.ч. последний шанс)
     else if (msg.type === 'spy_guess') {
       const room = rooms[myRoom];
       if (!room || !room.started || room.finished) return;
@@ -585,16 +640,26 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: 'error', text: 'Угадывать может только шпион!' }));
         return;
       }
-      if (room.vote && !room.vote.resolved) {
+      const redemption = !!(room.pendingRedemption && room.pendingRedemption.spyId === myId);
+      if (!redemption && room.vote && !room.vote.resolved) {
         ws.send(JSON.stringify({ type: 'error', text: 'Дождись окончания голосования!' }));
         return;
       }
       const secret = room.secretHero && room.secretHero.name;
       const guess = msg.heroName;
       const correct = !!secret && guess === secret;
-      room.finished = true;
-      if (room.vote) room.vote.resolved = true;
-      broadcast(myRoom, {
+      const spyIds = room.players.filter(p => p.role === 'spy').map(p => p.id);
+
+      if (redemption) {
+        // «Пойман, но не проиграл»: угадал — спасся (шпион +5), нет — как обычная поимка
+        if (correct) spyIds.forEach(id => addScore(room, id, 5));
+        else awardKickSpy(room, room.pendingRedemption.initiatorId);
+      } else {
+        if (correct) spyIds.forEach(id => addScore(room, id, 5));
+        else room.players.forEach(p => { if (!spyIds.includes(p.id)) addScore(room, p.id, 1); });
+      }
+
+      finishRound(myRoom, {
         type: 'guess_result',
         guess,
         correct,
@@ -602,7 +667,8 @@ wss.on('connection', ws => {
         spyId: myId,
         spyName: player.name,
         winner: correct ? 'spy' : 'civilians',
-        spyIds: room.players.filter(p => p.role === 'spy').map(p => p.id),
+        spyIds,
+        redemption,
       });
     }
 
@@ -615,6 +681,7 @@ wss.on('connection', ws => {
       room.secretHero = null;
       room.speakingOrder = null;
       room.vote = null;
+      room.pendingRedemption = null;
       room.players.forEach(p => {
         p.ready = p.id === room.hostId;
         p.role = null;

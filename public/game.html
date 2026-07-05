@@ -10,10 +10,13 @@
     .result-scores .score-row{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid #2b2f36}
     .result-scores .score-row.me{border-color:#e8a838;color:#e8a838}
     .result-scores .score-row strong{color:#e8a838}
+    .hint-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-20px);background:#1b2430;border:1px solid #e8a838;color:#e8a838;padding:10px 18px;border-radius:20px;font-weight:700;font-size:.85rem;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:200}
+    .hint-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     .badge.badge-score{background:#3a2d0a;color:#e8a838;border:1px solid #e8a838}
   </style>
 </head>
 <body>
+<div id="hintToast" class="hint-toast"></div>
 <div class="loading-overlay" id="loadingOverlay">
   <div class="loading-spinner"></div>
   <div class="loading-text">Подключение к игре...</div>
@@ -204,9 +207,9 @@ function appConfirm({ title = 'Подтвердить действие', message
 }
 
 let gameData = JSON.parse(sessionStorage.getItem('dotaspy_game') || 'null');
-let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer, speakingOrder = [];
+let role, hero, locHero, time, players, myId, initialSpyNotes = [], hostId, initialTimer, speakingOrder = [], spyPool = null;
 if (gameData) {
-  ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer, speakingOrder = [] } = gameData);
+  ({ role, hero, location: locHero, time, players, myId, spyNotes: initialSpyNotes = [], hostId, initialTimer, speakingOrder = [], spyPool = null } = gameData);
 } else {
   console.log('Waiting for rejoin data from server...');
 }
@@ -224,6 +227,7 @@ const ATTR_GROUPS = [
   { key: 'all', label: 'Универсал', cls: 'attr-all' },
 ];
 let guessMode = false;
+let spyPoolSet = (spyPool && spyPool.length) ? new Set(spyPool) : null;
 
 function renderVotePlayers() {
   if (!players) return;
@@ -309,7 +313,7 @@ function initSpyNotes() {
   board.innerHTML = '';
   const query = (document.getElementById('spyHeroSearch')?.value || '').trim().toLowerCase();
   ATTR_GROUPS.forEach(g => {
-    const list = HEROES.filter(h => (h.attr || 'all') === g.key && (!query || h.name.toLowerCase().includes(query)));
+    const list = HEROES.filter(h => (h.attr || 'all') === g.key && (!spyPoolSet || spyPoolSet.has(h.name)) && (!query || h.name.toLowerCase().includes(query)));
     if (!list.length) return;
     const grp = document.createElement('div');
     grp.className = 'hero-group ' + g.cls;
@@ -403,6 +407,9 @@ function handle(msg) {
   if (msg.type === 'vote_update')   onVoteUpdate(msg);
   if (msg.type === 'vote_result')   onVoteResult(msg);
   if (msg.type === 'guess_result')  onGuessResult(msg);
+  if (msg.type === 'spy_pool')      onSpyPool(msg);
+  if (msg.type === 'hint_notice')   showHintToast();
+  if (msg.type === 'time_up')       onTimeUp(msg);
   if (msg.type === 'error') {
     document.getElementById('voteErr').textContent = msg.text;
     setTimeout(()=>document.getElementById('voteErr').textContent='',3000);
@@ -441,6 +448,7 @@ function connect() {
       const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
       ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId, clientId: (function(){let i=localStorage.getItem('dotaspy_client_id'); if(!i){i='c_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('dotaspy_client_id',i);} return i;})() }));
+      if (isHost) startAutoTimer();
       if (role === 'spy' && crossedHeroes.size > 0) {
         setTimeout(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -484,15 +492,20 @@ function toggleTimer() {
     iv = setInterval(() => {
       remaining = Math.max(0, remaining - 1);
       renderTimer();
-      ws.send(JSON.stringify({ type: 'timer', remaining }));
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'timer', remaining }));
       if (remaining === 0) { clearInterval(iv); running = false; document.getElementById('btnStartStop').textContent = '▶ Старт'; }
     }, 1000);
   }
 }
 function resetTimer() {
   clearInterval(iv); running = false; remaining = totalSec; renderTimer();
-  ws.send(JSON.stringify({ type: 'timer', remaining }));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'timer', remaining }));
   document.getElementById('btnStartStop').textContent = '▶ Старт';
+}
+
+function startAutoTimer() {
+  if (!isHost || running || remaining <= 0) return;
+  toggleTimer();
 }
 
 let revealed = false;
@@ -658,11 +671,58 @@ function onVoteResult(msg) {
   showResult({ emoji, title, sub, scores: msg.scores });
 }
 
+let hintToastTimer = null;
+function showHintToast() {
+  const t = document.getElementById('hintToast');
+  if (!t) return;
+  t.textContent = '🔔 Кому-то пришла подсказка';
+  t.classList.add('show');
+  clearTimeout(hintToastTimer);
+  hintToastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function onSpyPool(msg) {
+  if (!Array.isArray(msg.pool)) return;
+  spyPoolSet = new Set(msg.pool);
+  if (role === 'spy') initSpyNotes();
+}
+
+function onTimeUp(msg) {
+  clearInterval(iv); running = false; remaining = 0; renderTimer();
+  document.getElementById('voteModal').classList.add('hidden');
+  const amSpy = role === 'spy' && (msg.spyIds || []).includes(myId);
+  if (amSpy) {
+    document.getElementById('resultOverlay').classList.add('hidden');
+    document.getElementById('spySection').style.display = '';
+    guessMode = true;
+    const btn = document.getElementById('guessBtn');
+    if (btn) { btn.classList.add('active'); btn.textContent = 'Отменить догадку'; }
+    const hint = document.getElementById('guessHint');
+    if (hint) { hint.style.display = ''; hint.textContent = 'Время вышло — ты победил (+3)! Назови героя для бонуса (+2).'; }
+    document.getElementById('heroBoard').classList.add('guessing');
+    const it = document.getElementById('intelTitle');
+    if (it) it.textContent = 'Время вышло — назови героя';
+    const sec = document.getElementById('spySection');
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } else {
+    showResult({ emoji: '⏰', title: 'Время вышло — шпион победил!', sub: 'Раунд закончился, шпион получает очки. Он ещё может назвать героя для бонуса…', scores: msg.scores, showNewGame: false });
+  }
+}
+
 function onGuessResult(msg) {
   voteActive = false;
   document.getElementById('voteModal').classList.add('hidden');
   const secret = (msg.secretHero && msg.secretHero.name) || '???';
   let emoji, title, sub;
+  if (msg.timeout) {
+    emoji = msg.correct ? '🏆' : '⏰';
+    title = 'Время вышло — шпион победил!';
+    if (msg.noGuess) sub = `Шпион не стал называть героя. Загадан был ${secret}. Шпион получает +3.`;
+    else if (msg.correct) sub = `Шпион назвал «${msg.guess}» — верно! Загадан был ${secret}. Бонус за угадывание — итого +5.`;
+    else sub = `Шпион назвал «${msg.guess}», но загадан был ${secret}. Без бонуса — шпион получает +3.`;
+    showResult({ emoji, title, sub, scores: msg.scores });
+    return;
+  }
   if (msg.correct) {
     emoji = '🕵️';
     title = msg.redemption ? 'Шпион спасся!' : 'Шпион угадал!';

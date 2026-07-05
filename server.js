@@ -76,6 +76,90 @@ function finishRound(roomCode, resultMsg) {
   broadcast(roomCode, { ...resultMsg, scores: standings(room) });
 }
 
+// ── ПОДСКАЗКИ ШПИОНУ ПО ТАЙМЕРУ (elimination) ──
+// План подсказок в % от общего времени раунда. Шпион может назвать героя в любой
+// момент -> расписание сдвинуто позже. Роль/позицию не даём — только тип атаки, затем атрибут.
+function buildHintPlan(room, poolHeroes) {
+  const minutes = room.settings.time;
+  const totalSec = room.settings.time * 60;
+  let n;
+  if (minutes <= 3) n = 0;
+  else if (minutes <= 7) n = 1;
+  else n = 2; // 8-14 и 15+ (потолок 2)
+  if (poolHeroes.length < 30) n = Math.max(0, n - 1); // маленький пул -> меньше подсказок
+  const SPY_CAN_GUESS_ANYTIME = true;
+  const pcts = SPY_CAN_GUESS_ANYTIME
+    ? (n === 1 ? [0.70] : n === 2 ? [0.65, 0.88] : [])
+    : (n === 1 ? [0.60] : n === 2 ? [0.55, 0.80] : []);
+  const kinds = ['atk', 'attr']; // слабая -> сильная
+  const attrMode = (room.settings.attrMode && room.settings.attrMode !== 'any') ? room.settings.attrMode : null;
+  const plan = [];
+  for (let i = 0; i < n; i++) {
+    const kind = kinds[i];
+    if (kind === 'attr' && attrMode) continue; // режим «по атрибуту» -> подсказка атрибута бесполезна
+    plan.push({ thresholdSec: Math.round(pcts[i] * totalSec), kind, fired: false });
+  }
+  return plan;
+}
+
+// Сузить spyPool по типу атаки / атрибуту загаданного. Возвращает true, если что-то удалено.
+function applyHint(room, kind) {
+  const secret = room.secretHero;
+  if (!secret || !Array.isArray(room.spyPool)) return false;
+  const before = room.spyPool.length;
+  const next = (kind === 'atk')
+    ? room.spyPool.filter(h => h.atk === secret.atk)
+    : room.spyPool.filter(h => (h.attr || 'all') === (secret.attr || 'all'));
+  if (!next.some(h => h.name === secret.name)) return false; // sanity: загаданный не должен выпадать
+  if (next.length >= before) return false;                   // ничего не удалено -> не выдаём
+  room.spyPool = next;
+  return true;
+}
+
+function sendSpyPool(room) {
+  const names = (room.spyPool || []).map(h => h.name);
+  room.players.filter(p => p.role === 'spy').forEach(p => {
+    if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify({ type: 'spy_pool', pool: names }));
+  });
+}
+
+function processHints(room, roomCode) {
+  if (!room.started || room.finished || !Array.isArray(room.hintPlan)) return;
+  const totalSec = room.settings.time * 60;
+  const remaining = room.timer ? room.timer.remaining : totalSec;
+  const elapsed = totalSec - remaining;
+  for (const h of room.hintPlan) {
+    if (h.fired || elapsed < h.thresholdSec) continue;
+    h.fired = true; // порог пройден — оцениваем один раз
+    if (applyHint(room, h.kind)) {
+      sendSpyPool(room);
+      broadcast(roomCode, { type: 'hint_notice' }); // нейтрально, всем, без деталей
+    }
+  }
+}
+
+// Таймер истёк -> побеждает шпион. Сразу +3; догадка верна -> ещё +2 (итого 5).
+function handleTimeout(room, roomCode) {
+  if (!room.started || room.finished || room.timedOut) return;
+  const remaining = room.timer ? room.timer.remaining : 1;
+  if (remaining > 0) return;
+  room.timedOut = true;
+  const spyIds = room.players.filter(p => p.role === 'spy').map(p => p.id);
+  spyIds.forEach(id => addScore(room, id, 3));
+  room.pendingTimeout = { spyIds };
+  broadcast(roomCode, { type: 'time_up', spyIds, scores: standings(room) });
+  clearTimeout(room._timeoutFallback);
+  room._timeoutFallback = setTimeout(() => {
+    const r = rooms[roomCode];
+    if (!r || !r.pendingTimeout) return;
+    r.pendingTimeout = null;
+    finishRound(roomCode, {
+      type: 'guess_result', timeout: true, noGuess: true, guess: null, correct: false,
+      secretHero: r.secretHero || null, spyId: null, spyName: null, winner: 'spy', spyIds,
+    });
+  }, 30000);
+}
+
 // Spy notes functions
 function getSpyNotes(roomCode, playerId) {
   if (!spyNotes[roomCode]) spyNotes[roomCode] = {};
@@ -249,6 +333,7 @@ function buildGameAssignment(room, player, roomCode) {
       .map(x => ({ id: x.id, name: x.name })),
     myId: player.id,
     spyNotes: isSpy ? getSpyNotes(roomCode, player.id) : [],
+    spyPool: isSpy ? (room.spyPool || []).map(h => h.name) : null,
     hostId: room.hostId,
     initialTimer: room.timer?.remaining || room.settings.time * 60,
     scores: standings(room),
@@ -330,7 +415,7 @@ wss.on('connection', ws => {
       rooms[code] = {
         hostId: myId,
         players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId, score: 0 }],
-        settings: { multipleSpies: false, catchButNotLost: false, time: 8, maxPlayers: 4 },
+        settings: { multipleSpies: false, catchButNotLost: false, attrMode: 'any', time: 8, maxPlayers: 4 },
         started: false,
         reconnectGrace: {},
       };
@@ -479,6 +564,7 @@ wss.on('connection', ws => {
         maxPlayers: Math.max(room.players.length, clamp(next.maxPlayers, 3, 12, room.settings.maxPlayers || 4)),
         multipleSpies: !!next.multipleSpies,
         catchButNotLost: !!next.catchButNotLost,
+        attrMode: ['any','str','agi','int','all'].includes(next.attrMode) ? next.attrMode : (room.settings.attrMode || 'any'),
         time: clamp(next.time, 4, 20, room.settings.time || 8),
       };
       broadcast(myRoom, roomState(myRoom));
@@ -525,15 +611,24 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: 'error', text: 'Нужно минимум 3 игрока для начала игры!' }));
         return;
       }
-      // pick a random hero from disabled list sent by host
+      // pick a random hero (draft-ban + режим «по атрибуту»)
       const { heroes = [], disabledHeroes = [] } = msg;
-      const available = heroes.filter(h => !disabledHeroes.includes(h.name));
+      let available = heroes.filter(h => !disabledHeroes.includes(h.name));
+      const attrMode = (room.settings.attrMode && room.settings.attrMode !== 'any') ? room.settings.attrMode : null;
+      if (attrMode) available = available.filter(h => (h.attr || 'all') === attrMode);
       if (available.length === 0) {
-        ws.send(JSON.stringify({ type: 'error', text: 'Нет доступных персонажей!' }));
+        ws.send(JSON.stringify({ type: 'error', text: 'Нет доступных персонажей для выбранного режима!' }));
         return;
       }
       const hero = available[Math.floor(Math.random() * available.length)];
       room.secretHero = hero;
+      // Пул для сетки шпиона (сужается подсказками) + план подсказок
+      room.spyPool = available.slice();
+      room.hintPlan = buildHintPlan(room, available);
+      room.timedOut = false;
+      room.pendingTimeout = null;
+      clearTimeout(room._timeoutFallback);
+      if (spyNotes[myRoom]) spyNotes[myRoom] = {}; // сброс вычёркиваний прошлой игры
 
       const n = room.players.length;
       const maxSpies = Math.max(1, n - 1);
@@ -563,6 +658,8 @@ wss.on('connection', ws => {
       const room = rooms[myRoom];
       if (room) {
         room.timer = { remaining: msg.remaining, updatedAt: Date.now() };
+        processHints(room, myRoom);
+        handleTimeout(room, myRoom);
       }
       broadcast(myRoom, { type: 'timer', remaining: msg.remaining });
     }
@@ -640,35 +737,40 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: 'error', text: 'Угадывать может только шпион!' }));
         return;
       }
-      const redemption = !!(room.pendingRedemption && room.pendingRedemption.spyId === myId);
-      if (!redemption && room.vote && !room.vote.resolved) {
-        ws.send(JSON.stringify({ type: 'error', text: 'Дождись окончания голосования!' }));
-        return;
-      }
       const secret = room.secretHero && room.secretHero.name;
       const guess = msg.heroName;
       const correct = !!secret && guess === secret;
       const spyIds = room.players.filter(p => p.role === 'spy').map(p => p.id);
 
+      // Таймаут: шпион уже победил (+3), догадка — только за бонус (+2 -> итого 5)
+      if (room.pendingTimeout) {
+        clearTimeout(room._timeoutFallback);
+        if (correct) spyIds.forEach(id => addScore(room, id, 2));
+        room.pendingTimeout = null;
+        finishRound(myRoom, {
+          type: 'guess_result', timeout: true, guess, correct,
+          secretHero: room.secretHero || null, spyId: myId, spyName: player.name,
+          winner: 'spy', spyIds,
+        });
+        return;
+      }
+
+      const redemption = !!(room.pendingRedemption && room.pendingRedemption.spyId === myId);
+      if (!redemption && room.vote && !room.vote.resolved) {
+        ws.send(JSON.stringify({ type: 'error', text: 'Дождись окончания голосования!' }));
+        return;
+      }
       if (redemption) {
-        // «Пойман, но не проиграл»: угадал — спасся (шпион +5), нет — как обычная поимка
         if (correct) spyIds.forEach(id => addScore(room, id, 5));
         else awardKickSpy(room, room.pendingRedemption.initiatorId);
       } else {
         if (correct) spyIds.forEach(id => addScore(room, id, 5));
         else room.players.forEach(p => { if (!spyIds.includes(p.id)) addScore(room, p.id, 1); });
       }
-
       finishRound(myRoom, {
-        type: 'guess_result',
-        guess,
-        correct,
-        secretHero: room.secretHero || null,
-        spyId: myId,
-        spyName: player.name,
-        winner: correct ? 'spy' : 'civilians',
-        spyIds,
-        redemption,
+        type: 'guess_result', guess, correct,
+        secretHero: room.secretHero || null, spyId: myId, spyName: player.name,
+        winner: correct ? 'spy' : 'civilians', spyIds, redemption,
       });
     }
 
@@ -682,6 +784,12 @@ wss.on('connection', ws => {
       room.speakingOrder = null;
       room.vote = null;
       room.pendingRedemption = null;
+      room.spyPool = null;
+      room.hintPlan = null;
+      room.timedOut = false;
+      room.pendingTimeout = null;
+      clearTimeout(room._timeoutFallback);
+      if (spyNotes[myRoom]) spyNotes[myRoom] = {};
       room.players.forEach(p => {
         p.ready = p.id === room.hostId;
         p.role = null;

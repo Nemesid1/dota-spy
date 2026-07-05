@@ -11,6 +11,8 @@
     .result-scores .score-row.me{border-color:#e8a838;color:#e8a838}
     .result-scores .score-row strong{color:#e8a838}
     .badge.badge-score{background:#3a2d0a;color:#e8a838;border:1px solid #e8a838}
+    .setting-select{width:100%;background:#0d1117;border:1px solid #30363d;color:#e0e0e0;border-radius:8px;padding:9px 10px;font-size:.9rem;outline:none;cursor:pointer}
+    .setting-select:focus{border-color:#c84b31}
   </style>
 </head>
 <body class="lobby-body">
@@ -127,6 +129,26 @@
             <span>Последний шанс выгнанному шпиону</span>
           </label>
           <p class="setting-note" id="catchModeHint">Если выключено — выгнанный шпион сразу проигрывает.</p>
+        </article>
+
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3 3h8v8H3V3Zm10 0h8v8h-8V3ZM3 13h8v8H3v-8Zm10 0h8v8h-8v-8Z"/></svg>
+            </span>
+            <div>
+              <label for="attrModeSelect">Пул героев</label>
+              <strong id="attrModeTitle">Все атрибуты</strong>
+            </div>
+          </div>
+          <select id="attrModeSelect" class="setting-select" onchange="updateLocalSettingLabels();sendSettings()">
+            <option value="any">Все атрибуты</option>
+            <option value="str">Только Сила</option>
+            <option value="agi">Только Ловкость</option>
+            <option value="int">Только Интеллект</option>
+            <option value="all">Только Универсал</option>
+          </select>
+          <p class="setting-note" id="attrModeHint">Загаданный герой берётся из всех классов.</p>
         </article>
       </div>
 
@@ -392,6 +414,7 @@
       document.getElementById('timeRange').value = state.settings.time || 8;
       document.getElementById('multiSpyToggle').checked = !!state.settings.multipleSpies;
       document.getElementById('catchToggle').checked = !!state.settings.catchButNotLost;
+      document.getElementById('attrModeSelect').value = state.settings.attrMode || 'any';
       updateLocalSettingLabels();
     }
 
@@ -513,6 +536,11 @@
     const catchOn = catchEl && catchEl.checked;
     setText('catchModeTitle', catchOn ? 'Включено' : 'Выключено');
     setText('catchModeHint', catchOn ? 'Выгнанный шпион получит один финальный шанс угадать героя.' : 'Если выключено — выгнанный шпион сразу проигрывает.');
+    const attrSel = document.getElementById('attrModeSelect');
+    const av = attrSel ? attrSel.value : 'any';
+    const attrNames = { any: 'Все атрибуты', str: 'Только Сила', agi: 'Только Ловкость', int: 'Только Интеллект', all: 'Только Универсал' };
+    setText('attrModeTitle', attrNames[av] || 'Все атрибуты');
+    setText('attrModeHint', av === 'any' ? 'Загаданный герой берётся из всех классов.' : 'Загаданный герой и сетка шпиона — только выбранного класса.');
   }
 
   function sendSettings() {
@@ -521,6 +549,7 @@
       maxPlayers: parseInt(document.getElementById('playerRange').value, 10),
       multipleSpies: document.getElementById('multiSpyToggle').checked,
       catchButNotLost: document.getElementById('catchToggle').checked,
+      attrMode: document.getElementById('attrModeSelect').value,
       time: parseInt(document.getElementById('timeRange').value, 10),
     }}));
   }

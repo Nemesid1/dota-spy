@@ -35,6 +35,12 @@ const clients = {}; // ws -> { roomCode, playerId }
 function makeCode() {
   return Math.random().toString(36).slice(2,6).toUpperCase();
 }
+function makePlayerId(room) {
+  const used = new Set(room.players.map(p => p.id));
+  let n = 1;
+  while (used.has('p' + n)) n++;
+  return 'p' + n;
+}
 function broadcast(roomCode, msg) {
   const room = rooms[roomCode];
   if (!room) return;
@@ -272,7 +278,7 @@ wss.on('connection', ws => {
       rooms[code] = {
         hostId: myId,
         players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId }],
-        settings: { spies: 1, time: 8, maxPlayers: 4 },
+        settings: { multipleSpies: false, time: 8, maxPlayers: 4 },
         started: false,
         reconnectGrace: {},
       };
@@ -301,7 +307,7 @@ wss.on('connection', ws => {
       const max = room.settings.maxPlayers || 12;
       if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
       myRoom = code;
-      myId   = 'p' + (room.players.length + 1);
+      myId   = makePlayerId(room);
       room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
       ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
       broadcast(code, roomState(code));
@@ -377,7 +383,7 @@ wss.on('connection', ws => {
           const max = room.settings.maxPlayers || 12;
           if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
           myRoom = code;
-          myId   = 'p' + (room.players.length + 1);
+          myId   = makePlayerId(room);
           room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
           ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
           broadcast(code, roomState(code));
@@ -408,12 +414,45 @@ wss.on('connection', ws => {
     // ── update settings (host only)
     else if (msg.type === 'settings') {
       const room = rooms[myRoom];
-      if (!room || room.hostId !== myId) return;
-      room.settings = { ...room.settings, ...msg.settings };
+      if (!room || room.hostId !== myId || room.started) return;
+      const next = msg.settings || {};
+      const clamp = (value, min, max, fallback) => {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.max(min, Math.min(max, n));
+      };
+      room.settings = {
+        ...room.settings,
+        maxPlayers: Math.max(room.players.length, clamp(next.maxPlayers, 3, 12, room.settings.maxPlayers || 4)),
+        multipleSpies: !!next.multipleSpies,
+        time: clamp(next.time, 4, 20, room.settings.time || 8),
+      };
       broadcast(myRoom, roomState(myRoom));
     }
 
-    // ── ready toggle
+    else if (msg.type === 'kick_player') {
+      const room = rooms[myRoom];
+      if (!room || room.hostId !== myId || room.started) return;
+      const target = room.players.find(p => p.id === msg.playerId);
+      if (!target || target.id === myId) return;
+      try { if (target.ws && target.ws.readyState === 1) target.ws.send(JSON.stringify({ type: 'kicked' })); } catch {}
+      try { if (target.ws && target.ws.readyState === 1) target.ws.close(1000, 'kicked'); } catch {}
+      room.players = room.players.filter(p => p.id !== target.id);
+      if (room.reconnectGrace) delete room.reconnectGrace[target.id];
+      if (spyNotes[myRoom]) delete spyNotes[myRoom][target.id];
+      broadcast(myRoom, roomState(myRoom));
+    }
+
+    else if (msg.type === 'transfer_host') {
+      const room = rooms[myRoom];
+      if (!room || room.hostId !== myId || room.started) return;
+      const target = room.players.find(p => p.id === msg.playerId);
+      if (!target) return;
+      room.hostId = target.id;
+      target.ready = true;
+      broadcast(myRoom, roomState(myRoom));
+    }
+
     else if (msg.type === 'ready') {
       const room = rooms[myRoom];
       if (!room) return;
@@ -432,16 +471,6 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: 'error', text: 'Нужно минимум 3 игрока для начала игры!' }));
         return;
       }
-      
-      // Check maximum spies
-      const maxSpies = Math.min(room.players.length - 1, 3);
-      if (room.settings.spies > maxSpies) {
-        room.settings.spies = maxSpies;
-        broadcast(myRoom, roomState(myRoom));
-        ws.send(JSON.stringify({ type: 'error', text: `Количество шпионов уменьшено до ${maxSpies} (максимум для ${room.players.length} игроков)` }));
-        return;
-      }
-      
       // pick a random hero from disabled list sent by host
       const { heroes = [], disabledHeroes = [] } = msg;
       const available = heroes.filter(h => !disabledHeroes.includes(h.name));
@@ -453,7 +482,9 @@ wss.on('connection', ws => {
       room.secretHero = hero;
 
       const n = room.players.length;
-      const spyCount = Math.min(room.settings.spies, n - 1);
+      const maxSpies = Math.max(1, n - 1);
+      const spyCount = room.settings.multipleSpies ? (1 + Math.floor(Math.random() * maxSpies)) : 1;
+      room.actualSpyCount = spyCount;
 
       const indices = [...Array(n).keys()].sort(() => Math.random() - .5);
       const spyIds = new Set(indices.slice(0, spyCount).map(i => room.players[i].id));

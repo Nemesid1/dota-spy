@@ -5,30 +5,78 @@
   <title>Дота-Шпион</title>
   <link rel="stylesheet" href="style.css"/>
 </head>
-<body>
-<div class="page">
-  <div class="logo">ДОТА&#8209;<span>ШПИОН</span></div>
+<body class="home-body">
+<main class="page home-page">
+  <section class="home-stage">
+    <div class="home-poster" aria-hidden="true"></div>
+    <div class="home-overlay"></div>
 
-  <div class="card">
-    <div>
-      <label>Твоё имя</label>
-      <input type="text" id="nameInput" placeholder="Введи имя" maxlength="20"/>
-    </div>
+    <section class="home-content">
+      <div class="home-left">
+        <header class="home-brand">
+          <div>
+            <div class="logo home-logo">ДОТА&#8209;<span>ШПИОН</span></div>
+            <p class="home-subtitle">Скрытая роль, общий герой и один стол для подозрений.</p>
+          </div>
+          <div class="home-status" id="statusMsg"></div>
+        </header>
 
-    <button class="btn btn-primary" id="btnCreate" onclick="createRoom()">🏠 Создать комнату</button>
+        <section class="home-auth">
+          <article class="home-card home-card-primary">
+            <div class="card-kicker">Комната</div>
+            <h1>Собрать лобби</h1>
+            <div class="field">
+              <label for="nameInput">Твоё имя</label>
+              <input type="text" id="nameInput" placeholder="Введи имя" maxlength="20"/>
+            </div>
+            <button class="btn btn-primary btn-large" id="btnCreate" onclick="createRoom()">
+              <span class="btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5v8a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 18.5v-8Z"/></svg>
+              </span>
+              Создать комнату
+            </button>
+          </article>
 
-    <div class="divider">или</div>
+          <article class="home-card home-join-card">
+            <div class="card-kicker">Вход</div>
+            <h2>Присоединиться</h2>
+            <div class="field">
+              <label for="codeInput">Код комнаты</label>
+              <input type="text" id="codeInput" class="code-input" placeholder="XXXX" maxlength="4"/>
+            </div>
+            <button class="btn btn-secondary btn-large" id="btnJoin" onclick="joinRoom()">
+              <span class="btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M10 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7v-2h7V7h-7V5Zm1.4 3.6L15 12l-3.6 3.4-1.4-1.45L11.6 13H4v-2h7.6L10 10.05l1.4-1.45Z"/></svg>
+              </span>
+              Войти в комнату
+            </button>
+          </article>
+        </section>
 
-    <div>
-      <label>Код комнаты</label>
-      <input type="text" id="codeInput" placeholder="XXXX" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-weight:700"/>
-    </div>
-    <button class="btn btn-secondary" id="btnJoin" onclick="joinRoom()">🚪 Войти в комнату</button>
+        <div class="error-msg home-error" id="errMsg"></div>
+        <div class="notice-msg" id="noticeMsg"></div>
+      </div>
 
-    <div class="error-msg" id="errMsg"></div>
-    <div style="font-size:.78rem;color:#8b949e;margin-top:8px;text-align:center" id="statusMsg"></div>
-  </div>
-</div>
+      <aside class="home-right">
+        <section class="home-brief">
+          <div class="panel-label">Быстрые правила</div>
+          <h2>Найди шпиона до финальной догадки</h2>
+          <div class="rule-list">
+            <div class="rule-item"><span>01</span><p>Мирные видят одного героя и задают вопросы друг другу.</p></div>
+            <div class="rule-item"><span>02</span><p>Шпион героя не знает, но может отсекать варианты на своей доске.</p></div>
+            <div class="rule-item"><span>03</span><p>Игроки голосуют за кик, а хост управляет лобби и таймером.</p></div>
+          </div>
+        </section>
+
+        <section class="home-stats">
+          <div class="home-stat"><span>3-12</span><p>игроков</p></div>
+          <div class="home-stat"><span>127</span><p>героев</p></div>
+          <div class="home-stat"><span>1-?</span><p>шпионов</p></div>
+        </section>
+      </aside>
+    </section>
+  </section>
+</main>
 
 <script src="ws-connect.js"></script>
 <script>
@@ -37,14 +85,23 @@
 
   function getClientId() {
     let id = localStorage.getItem('dotaspy_client_id');
-    if (!id) { id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('dotaspy_client_id', id); }
+    if (!id) {
+      id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('dotaspy_client_id', id);
+    }
     return id;
   }
-
 
   function setButtonsDisabled(disabled) {
     document.getElementById('btnCreate').disabled = disabled;
     document.getElementById('btnJoin').disabled = disabled;
+  }
+
+  function showNotice() {
+    const notice = sessionStorage.getItem('dotaspy_notice');
+    if (!notice) return;
+    document.getElementById('noticeMsg').textContent = notice;
+    sessionStorage.removeItem('dotaspy_notice');
   }
 
   function connect(onOpen) {
@@ -92,6 +149,8 @@
     sessionStorage.setItem('dotaspy_name', name);
     connect(socket => socket.send(JSON.stringify({ type: 'join', name, code, clientId: getClientId() })));
   }
+
+  window.addEventListener('load', showNotice);
 </script>
 </body>
 </html>

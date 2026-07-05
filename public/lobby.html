@@ -5,94 +5,222 @@
   <title>Лобби — Дота-Шпион</title>
   <link rel="stylesheet" href="style.css"/>
 </head>
-<body>
-<!-- Loading overlay -->
+<body class="lobby-body">
 <div class="loading-overlay" id="loadingOverlay" style="display:none">
   <div class="loading-spinner"></div>
   <div class="loading-text">Подключение к лобби...</div>
 </div>
 
-<div class="page" id="lobbyPage">
-  <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:520px;margin-bottom:10px">
-    <div class="logo" style="font-size:1.5rem">ДОТА&#8209;<span>ШПИОН</span></div>
+<main class="page lobby-page" id="lobbyPage">
+  <header class="lobby-header">
+    <div class="logo lobby-logo">ДОТА&#8209;<span>ШПИОН</span></div>
     <div class="connection-status disconnected" id="connectionStatus">
       <span class="connection-dot disconnected"></span>
       <span id="connectionText">Подключение...</span>
     </div>
-  </div>
+  </header>
 
-  <div class="card" style="max-width:520px">
-    <div class="room-code" id="roomCode">····</div>
-    <div class="room-hint">Скажи этот код друзьям — они заходят на этот же сайт</div>
-    <div class="room-hint" style="color:#e8a838;margin-top:6px">⚠️ Не закрывай эту вкладку, пока друзья не подключились!</div>
-  </div>
+  <section class="lobby-layout host-view" id="lobbyLayout">
+    <aside class="lobby-column lobby-command">
+      <section class="panel room-panel">
+        <div class="panel-label">Код комнаты</div>
+        <div class="room-code-row">
+          <div class="room-code" id="roomCode">····</div>
+          <button class="icon-btn" type="button" title="Скопировать код" onclick="copyRoomCode()">
+            <svg viewBox="0 0 24 24"><path d="M8 8h10v12H8V8Zm-2 8H4V4h12v2H6v10Z"/></svg>
+          </button>
+        </div>
+        <div class="room-hint">Держи лобби открытым, пока друзья подключаются.</div>
+      </section>
 
-  <!-- Host settings -->
-  <div class="card" id="hostSettings" style="max-width:520px">
-    <h2>Настройки (только для хоста)</h2>
-    <div>
-      <label>Количество игроков</label>
-      <div class="range-row">
-        <input type="range" id="playerRange" min="2" max="12" value="4"
-               oninput="document.getElementById('playerVal').textContent=this.value;sendSettings()"/>
-        <span class="range-val" id="playerVal">4</span>
+      <section class="panel players-panel">
+        <div class="panel-title-row">
+          <h2>Игроки <span id="playersCount"></span></h2>
+          <span class="mini-pill" id="hostBadge">Хост</span>
+        </div>
+        <div class="players-list" id="playersList"></div>
+      </section>
+
+      <section class="panel action-panel">
+        <div id="readyBanner" class="ready-banner off" style="display:none">Ты ещё не готов</div>
+        <button class="btn btn-secondary" id="btnReady" onclick="toggleReady()">Готов</button>
+        <button class="btn btn-primary" id="btnStart" onclick="startGame()">Начать игру</button>
+        <button class="btn btn-danger" id="btnLeave" onclick="leaveLobby()">Выйти из лобби</button>
+        <div class="error-msg" id="errMsg"></div>
+      </section>
+    </aside>
+
+    <section class="panel settings-panel" id="hostSettings">
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-label">Настройки хоста</div>
+          <h2>Параметры партии</h2>
+        </div>
       </div>
-    </div>
-    <div>
-      <label>Шпионов</label>
-      <div class="range-row">
-        <input type="range" id="spyRange" min="1" max="4" value="1"
-               oninput="document.getElementById('spyVal').textContent=this.value;sendSettings()"/>
-        <span class="range-val" id="spyVal">1</span>
+
+      <div class="settings-grid">
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm8 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM3 20c.4-3.6 2.1-6 5-6s4.6 2.4 5 6H3Zm8.5 0c.4-2.4 1.6-4.2 3.7-4.8.3-.1.6-.2.8-.2 2.9 0 4.6 2.4 5 6h-9.5Z"/></svg>
+            </span>
+            <div>
+              <label for="playerRange">Игроков</label>
+              <strong><span id="playerVal">4</span> максимум</strong>
+            </div>
+          </div>
+          <input type="range" id="playerRange" min="3" max="12" value="4" oninput="updateLocalSettingLabels();sendSettings()"/>
+        </article>
+
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3c3.2 0 6 2.1 6 5.5 0 2-.9 3.8-2.3 4.9l2.7 5.6h-3l-1.8-4.2a8 8 0 0 1-3.2 0L8.6 19h-3l2.7-5.6A6.1 6.1 0 0 1 6 8.5C6 5.1 8.8 3 12 3Zm-2.5 6.7c.7 0 1.2-.5 1.2-1.2S10.2 7.3 9.5 7.3s-1.2.5-1.2 1.2.5 1.2 1.2 1.2Zm5 0c.7 0 1.2-.5 1.2-1.2s-.5-1.2-1.2-1.2-1.2.5-1.2 1.2.5 1.2 1.2 1.2ZM10 12h4v1.7h-4V12Z"/></svg>
+            </span>
+            <div>
+              <label for="multiSpyToggle">Шпионы</label>
+              <strong id="spyModeTitle">Один шпион</strong>
+            </div>
+          </div>
+          <label class="toggle-card">
+            <input type="checkbox" id="multiSpyToggle" onchange="updateLocalSettingLabels();sendSettings()"/>
+            <span class="switch" aria-hidden="true"></span>
+            <span id="spyModeText">Скрыть точное число шпионов</span>
+          </label>
+          <p class="setting-note" id="spyModeHint">В игре будет один шпион.</p>
+        </article>
+
+        <article class="setting-card">
+          <div class="setting-head">
+            <span class="setting-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 1 1 0 18 9 9 0 0 1 0-18Zm0 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm1 1.5V12l3 1.8-1 1.7-4-2.4V7.5h2ZM9 1h6v2H9V1Z"/></svg>
+            </span>
+            <div>
+              <label for="timeRange">Время раунда</label>
+              <strong><span id="timeVal">8</span> минут</strong>
+            </div>
+          </div>
+          <input type="range" id="timeRange" min="4" max="20" value="8" oninput="updateLocalSettingLabels();sendSettings()"/>
+        </article>
       </div>
-    </div>
-    <div>
-      <label>Время раунда (минут)</label>
-      <div class="range-row">
-        <input type="range" id="timeRange" min="4" max="20" value="8"
-               oninput="document.getElementById('timeVal').textContent=this.value;sendSettings()"/>
-        <span class="range-val" id="timeVal">8</span>
+
+      <section class="lobby-briefing" aria-label="Брифинг партии">
+        <div class="briefing-top">
+          <div>
+            <div class="panel-label">Брифинг партии</div>
+            <h3>Готовность к старту</h3>
+          </div>
+          <span class="mini-pill" id="briefReadyValue">1 / 4</span>
+        </div>
+
+        <div class="readiness-meter" aria-hidden="true">
+          <span id="readinessFill"></span>
+        </div>
+
+        <div class="briefing-grid">
+          <div class="briefing-card">
+            <span>Режим</span>
+            <strong id="briefModeValue">Один шпион</strong>
+          </div>
+          <div class="briefing-card">
+            <span>Слоты</span>
+            <strong id="briefCapacityValue">1 / 4</strong>
+          </div>
+          <div class="briefing-card">
+            <span>Раунд</span>
+            <strong id="briefTimeValue">8 мин</strong>
+          </div>
+          <div class="briefing-card">
+            <span>Пул</span>
+            <strong>127 героев</strong>
+          </div>
+        </div>
+
+        <div class="briefing-note" id="briefHint">
+          Игроки подключаются по коду слева. Когда все готовы, запускай раунд.
+        </div>
+      </section>
+    </section>
+
+    <section class="panel guest-briefing-panel" id="guestBriefing" hidden>
+      <div class="guest-hero-visual" aria-hidden="true">
+        <div class="guest-hero-ring"></div>
+        <div class="guest-spy-icon">
+          <svg viewBox="0 0 24 24"><path d="M4 10.8c1.1-3.3 4.1-5.3 8-5.3s6.9 2 8 5.3l-1.7.7c-.5 3.3-3.1 5.5-6.3 5.5s-5.8-2.2-6.3-5.5L4 10.8Zm5.2 1.1c.9 0 1.6-.5 1.9-1.3H7.3c.3.8 1 1.3 1.9 1.3Zm5.6 0c.9 0 1.6-.5 1.9-1.3h-3.8c.3.8 1 1.3 1.9 1.3ZM9 18h6l-1 2h-4l-1-2ZM8.2 4 9.4 2h5.2l1.2 2H8.2Z"/></svg>
+        </div>
       </div>
+
+      <div class="guest-status">
+        <div class="panel-label">Ожидание старта</div>
+        <h2 id="guestStatusTitle">Лобби собирается</h2>
+        <p id="guestStatusText">Отметь готовность и следи за составом игроков.</p>
+      </div>
+
+      <div class="readiness-meter guest-meter" aria-hidden="true">
+        <span id="guestReadyFill"></span>
+      </div>
+
+      <div class="guest-widget-grid">
+        <div class="guest-widget">
+          <span class="guest-widget-icon">
+            <svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm8 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM3 20c.4-3.6 2.1-6 5-6s4.6 2.4 5 6H3Zm8.5 0c.4-2.4 1.6-4.2 3.7-4.8.3-.1.6-.2.8-.2 2.9 0 4.6 2.4 5 6h-9.5Z"/></svg>
+          </span>
+          <div><span>Готовность</span><strong id="guestReadyValue">1 / 4</strong></div>
+        </div>
+        <div class="guest-widget">
+          <span class="guest-widget-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 3c3.2 0 6 2.1 6 5.5 0 2-.9 3.8-2.3 4.9l2.7 5.6h-3l-1.8-4.2a8 8 0 0 1-3.2 0L8.6 19h-3l2.7-5.6A6.1 6.1 0 0 1 6 8.5C6 5.1 8.8 3 12 3Z"/></svg>
+          </span>
+          <div><span>Режим</span><strong id="guestModeValue">Один шпион</strong></div>
+        </div>
+        <div class="guest-widget">
+          <span class="guest-widget-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 1 1 0 18 9 9 0 0 1 0-18Zm1 3.5V12l3 1.8-1 1.7-4-2.4V7.5h2ZM9 1h6v2H9V1Z"/></svg>
+          </span>
+          <div><span>Раунд</span><strong id="guestRoundValue">8 мин</strong></div>
+        </div>
+        <div class="guest-widget">
+          <span class="guest-widget-icon">
+            <svg viewBox="0 0 24 24"><path d="M5 4h14v15H5V4Zm2 2v11h10V6H7Zm2 2h6v2H9V8Zm0 3h6v2H9v-2Z"/></svg>
+          </span>
+          <div><span>Пул</span><strong>127 героев</strong></div>
+        </div>
+      </div>
+
+      <div class="guest-note" id="guestHint">Хост настраивает игру. Когда будешь готов, нажми кнопку слева.</div>
+    </section>
+
+  </section>
+</main>
+
+<div class="modal-overlay hidden" id="confirmOverlay">
+  <div class="modal app-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4L12 3Zm1 13h-2v2h2v-2Zm0-7h-2v5h2V9Z"/></svg>
+    </div>
+    <div class="modal-title" id="confirmTitle">Подтвердить действие</div>
+    <div class="modal-sub" id="confirmText"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" type="button" id="confirmCancel">Отмена</button>
+      <button class="btn btn-primary" type="button" id="confirmOk">Подтвердить</button>
     </div>
   </div>
-
-  <!-- Players -->
-  <div class="card" style="max-width:520px">
-    <h2>Игроки <span id="playersCount" style="color:#e8a838"></span></h2>
-    <div class="players-list" id="playersList"></div>
-  </div>
-
-  <!-- Hero picker (host only) -->
-  <div class="card" id="heroPicker" style="max-width:520px">
-    <h2>Персонажи — нажми чтобы исключить</h2>
-    <div class="hero-grid" id="heroGrid"></div>
-  </div>
-
-  <!-- Мой статус готовности -->
-  <div id="readyBanner" class="ready-banner off" style="max-width:520px;width:100%;display:none">⏳ Ты ещё не готов</div>
-
-  <!-- Actions -->
-  <div class="controls" style="max-width:520px;width:100%">
-    <button class="btn btn-secondary" id="btnReady" onclick="toggleReady()">✅ Готов</button>
-    <button class="btn btn-primary" id="btnStart" onclick="startGame()">▶ Начать игру</button>
-    <button class="btn btn-danger" id="btnLeave" onclick="leaveLobby()">🚪 Выйти из лобби</button>
-  </div>
-  <div class="error-msg" id="errMsg"></div>
 </div>
 
 <script src="heroes.js"></script>
 <script src="ws-connect.js"></script>
 <script>
-  const myId   = sessionStorage.getItem('dotaspy_ws_id');
+  const myId = sessionStorage.getItem('dotaspy_ws_id');
   const myCode = sessionStorage.getItem('dotaspy_code');
   if (!myCode || !myId) { location.href = 'index.html'; }
-  let isHost   = false;
-  let myReady  = false;
+
+  let isHost = false;
+  let myReady = false;
   let ws;
   let connHandle = null;
   let hasConnectedOnce = false;
   let syncTimer = null;
-  const disabledHeroes = new Set();
+  let lastState = null;
 
   function getMyId() {
     return sessionStorage.getItem('dotaspy_ws_id');
@@ -100,46 +228,63 @@
 
   function getClientId() {
     let id = localStorage.getItem('dotaspy_client_id');
-    if (!id) { id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('dotaspy_client_id', id); }
+    if (!id) {
+      id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('dotaspy_client_id', id);
+    }
     return id;
   }
 
-  // --- Hero grid
-  const heroGrid = document.getElementById('heroGrid');
-  HEROES.forEach(h => {
-    const tile = document.createElement('div');
-    tile.className = 'hero-tile';
-    tile.title = h.name;
-    tile.innerHTML = `<img src="${h.img}" loading="lazy" alt="${h.name}"><div class="h-name">${h.name}</div>`;
-    tile.addEventListener('click', () => {
-      if (disabledHeroes.has(h.name)) disabledHeroes.delete(h.name);
-      else disabledHeroes.add(h.name);
-      tile.classList.toggle('disabled');
-    });
-    heroGrid.appendChild(tile);
-  });
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
 
-  // --- Connection management
-  let reconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 10;
-  
+  function appConfirm({ title = 'Подтвердить действие', message = '', okText = 'Подтвердить', danger = false } = {}) {
+    return new Promise(resolve => {
+      const overlay = document.getElementById('confirmOverlay');
+      const titleEl = document.getElementById('confirmTitle');
+      const textEl = document.getElementById('confirmText');
+      const ok = document.getElementById('confirmOk');
+      const cancel = document.getElementById('confirmCancel');
+      if (!overlay || !ok || !cancel) { resolve(false); return; }
+
+      titleEl.textContent = title;
+      textEl.textContent = message;
+      ok.textContent = okText;
+      ok.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+      overlay.classList.remove('hidden');
+
+      const cleanup = result => {
+        overlay.classList.add('hidden');
+        ok.removeEventListener('click', onOk);
+        cancel.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+      const onKey = e => { if (e.key === 'Escape') cleanup(false); };
+      ok.addEventListener('click', onOk);
+      cancel.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => ok.focus(), 0);
+    });
+  }
+
   function updateConnectionStatus(status, text) {
     const statusEl = document.getElementById('connectionStatus');
     const textEl = document.getElementById('connectionText');
     const dotEl = statusEl.querySelector('.connection-dot');
-    
-    statusEl.className = `connection-status ${status}`;
-    dotEl.className = `connection-dot ${status}`;
+    statusEl.className = 'connection-status ' + status;
+    dotEl.className = 'connection-dot ' + status;
     textEl.textContent = text;
-    
-    // Hide loading overlay when connected
     if (status === 'connected') {
       document.getElementById('loadingOverlay').style.display = 'none';
-      document.getElementById('lobbyPage').style.display = 'flex';
+      document.getElementById('lobbyPage').style.display = '';
     }
   }
-  
-  // --- WS reconnect from sessionStorage
+
   function connect() {
     if (connHandle) connHandle.stop();
     updateConnectionStatus('connecting', 'Подключение к лобби...');
@@ -154,43 +299,35 @@
       onOpen: socket => {
         ws = socket;
         hasConnectedOnce = true;
-        reconnectAttempts = 0;
-        updateConnectionStatus('connected', 'Подключено к лобби');
+        updateConnectionStatus('connected', 'Подключено');
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
-        const playerId = getMyId();
-        ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId, clientId: getClientId() }));
+        ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId: getMyId(), clientId: getClientId() }));
 
         clearInterval(syncTimer);
         syncTimer = setInterval(() => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'sync' }));
-          }
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'sync' }));
         }, 5000);
       },
       onMessage: e => handle(JSON.parse(e.data)),
       onDisconnect: () => {
         clearInterval(syncTimer);
         updateConnectionStatus('disconnected', 'Переподключение...');
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
-          setTimeout(connect, delay);
-        } else {
-          updateConnectionStatus('disconnected', 'Не удалось подключиться');
-          if (confirm('Соединение потеряно. Хотите перезагрузить страницу?')) location.reload();
-        }
+        setTimeout(connect, 1500);
       },
     });
   }
-  
-  // Initialize connection
-  window.addEventListener('load', () => {
-    connect();
-  });
 
   function handle(msg) {
     if (msg.type === 'left') { location.href = 'index.html'; return; }
-    if (msg.type === 'error') { document.getElementById('errMsg').textContent = msg.text; return; }
+    if (msg.type === 'kicked') {
+      sessionStorage.removeItem('dotaspy_ws_id');
+      sessionStorage.removeItem('dotaspy_code');
+      sessionStorage.removeItem('dotaspy_game');
+      sessionStorage.setItem('dotaspy_notice', 'Хост удалил тебя из лобби.');
+      location.href = 'index.html';
+      return;
+    }
+    if (msg.type === 'error') { setText('errMsg', msg.text); return; }
     if (msg.type === 'joined') {
       sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
       if (msg.roomState) renderLobby(msg.roomState);
@@ -207,7 +344,7 @@
     if (msg.type === 'room_state') {
       if (msg.started) {
         const name = sessionStorage.getItem('dotaspy_name') || 'Игрок';
-        ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId: getMyId() }));
+        ws.send(JSON.stringify({ type: 'rejoin', name, code: myCode, playerId: getMyId(), clientId: getClientId() }));
         return;
       }
       renderLobby(msg);
@@ -220,57 +357,144 @@
   }
 
   function renderLobby(state) {
-    document.getElementById('roomCode').textContent = state.code;
+    lastState = state;
+    setText('roomCode', state.code);
     isHost = state.hostId === getMyId();
+    document.getElementById('lobbyLayout').className = 'lobby-layout ' + (isHost ? 'host-view' : 'guest-view');
+    document.getElementById('hostSettings').hidden = !isHost;
+    document.getElementById('guestBriefing').hidden = isHost;
+    document.getElementById('btnStart').hidden = !isHost;
+    document.getElementById('btnReady').hidden = isHost;
+    document.getElementById('hostBadge').textContent = isHost ? 'Ты хост' : 'Гость';
 
-    document.getElementById('hostSettings').style.display = isHost ? '' : 'none';
-    document.getElementById('heroPicker').style.display   = isHost ? '' : 'none';
-    document.getElementById('btnStart').style.display     = isHost ? '' : 'none';
-    document.getElementById('btnReady').style.display     = isHost ? 'none' : '';
-
-    if (isHost && state.settings) {
+    if (state.settings) {
       document.getElementById('playerRange').value = state.settings.maxPlayers || 4;
-      document.getElementById('playerVal').textContent = state.settings.maxPlayers || 4;
-      document.getElementById('spyRange').value = state.settings.spies;
-      document.getElementById('spyVal').textContent = state.settings.spies;
-      document.getElementById('timeRange').value = state.settings.time;
-      document.getElementById('timeVal').textContent = state.settings.time;
+      document.getElementById('timeRange').value = state.settings.time || 8;
+      document.getElementById('multiSpyToggle').checked = !!state.settings.multipleSpies;
+      updateLocalSettingLabels();
     }
 
     const filled = state.players.length;
-    const max = state.settings?.maxPlayers || '?';
-    document.getElementById('playersCount').textContent = `(${filled} / ${max})`;
+    const max = (state.settings && state.settings.maxPlayers) || '?';
+    setText('playersCount', '(' + filled + ' / ' + max + ')');
+    renderBriefing(state);
+    renderPlayers(state);
 
+    const me = state.players.find(p => p.id === getMyId());
+    myReady = isHost || !!(me && me.ready);
+    updateReadyUI();
+  }
+
+  function renderBriefing(state) {
+    const maxPlayers = (state.settings && state.settings.maxPlayers) || 4;
+    const filled = state.players.length;
+    const readyCount = state.players.filter(p => p.id === state.hostId || p.ready).length;
+    const readyPct = Math.max(0, Math.min(100, Math.round((readyCount / Math.max(1, maxPlayers)) * 100)));
+    const multi = !!(state.settings && state.settings.multipleSpies);
+    const time = (state.settings && state.settings.time) || 8;
+    const me = state.players.find(p => p.id === getMyId());
+    const meReady = isHost || !!(me && me.ready);
+    setText('briefReadyValue', readyCount + ' / ' + maxPlayers);
+    setText('briefModeValue', multi ? 'Рандом шпионов' : 'Один шпион');
+    setText('briefCapacityValue', filled + ' / ' + maxPlayers);
+    setText('briefTimeValue', time + ' мин');
+    setText('guestReadyValue', readyCount + ' / ' + maxPlayers);
+    setText('guestModeValue', multi ? 'Скрытое число' : 'Один шпион');
+    setText('guestRoundValue', time + ' мин');
+    setText('guestStatusTitle', readyCount >= filled && filled >= 3 ? 'Комната готова' : 'Лобби собирается');
+    setText('guestStatusText', meReady ? 'Ты отмечен готовым. Ждём остальных игроков и старт от хоста.' : 'Отметь готовность, когда можно начинать. Хост запустит раунд.');
+    const fill = document.getElementById('readinessFill');
+    if (fill) fill.style.width = readyPct + '%';
+    const guestFill = document.getElementById('guestReadyFill');
+    if (guestFill) guestFill.style.width = readyPct + '%';
+    const hint = document.getElementById('briefHint');
+    if (hint) {
+      if (filled < 3) hint.textContent = 'Для старта нужно минимум 3 игрока. Код комнаты слева, его можно быстро скопировать.';
+      else if (readyCount < filled) hint.textContent = 'Не все игроки готовы. Хост может настроить раунд или подождать отметки готовности.';
+      else hint.textContent = 'Все на месте. Проверь время, режим шпионов и запускай раунд.';
+    }
+    const guestHint = document.getElementById('guestHint');
+    if (guestHint) {
+      if (filled < 3) guestHint.textContent = 'Нужно минимум 3 игрока. Передай код комнаты друзьям и оставайся в лобби.';
+      else if (!meReady) guestHint.textContent = 'Когда готов играть, нажми кнопку слева. Хост увидит твой статус сразу.';
+      else if (readyCount < filled) guestHint.textContent = 'Твой статус учтён. Ждём отметки готовности от остальных.';
+      else guestHint.textContent = 'Все готовы. Хост может запускать раунд.';
+    }
+  }
+
+  function renderPlayers(state) {
     const list = document.getElementById('playersList');
     list.innerHTML = '';
     state.players.forEach(p => {
       const row = document.createElement('div');
       const isMe = p.id === getMyId();
       const isRoomHost = p.id === state.hostId;
-      const ready = isRoomHost || p.ready; // хост всегда готов
+      const ready = isRoomHost || p.ready;
       row.className = 'player-row' + (isMe ? ' me' : '') + (ready ? ' is-ready' : '');
-      const badges = [];
-      if (isRoomHost) badges.push('<span class="badge badge-host">Хост</span>');
-      if (isMe)       badges.push('<span class="badge badge-you">Ты</span>');
-      badges.push(ready
-        ? '<span class="badge badge-ready">✅ Готов</span>'
-        : '<span class="badge badge-waiting">⏳ Ждёт</span>');
-      row.innerHTML = `<span class="p-name">${p.name}</span>${badges.join('')}`;
+
+      const name = document.createElement('span');
+      name.className = 'p-name';
+      name.textContent = p.name;
+      row.appendChild(name);
+
+      const badges = document.createElement('span');
+      badges.className = 'player-badges';
+      if (isRoomHost) badges.appendChild(makeBadge('Хост', 'badge-host'));
+      if (isMe) badges.appendChild(makeBadge('Ты', 'badge-you'));
+      badges.appendChild(makeBadge(ready ? 'Готов' : 'Ждёт', ready ? 'badge-ready' : 'badge-waiting'));
+      row.appendChild(badges);
+
+      if (isHost && !isMe) {
+        const actions = document.createElement('span');
+        actions.className = 'player-actions';
+        const transfer = document.createElement('button');
+        transfer.type = 'button';
+        transfer.className = 'player-action';
+        transfer.title = 'Передать хост';
+        transfer.textContent = 'Хост';
+        transfer.addEventListener('click', () => transferHost(p.id, p.name));
+        actions.appendChild(transfer);
+
+        const kick = document.createElement('button');
+        kick.type = 'button';
+        kick.className = 'player-action danger';
+        kick.title = 'Кикнуть игрока';
+        kick.textContent = 'Кик';
+        kick.addEventListener('click', () => kickPlayer(p.id, p.name));
+        actions.appendChild(kick);
+        row.appendChild(actions);
+      }
+
       list.appendChild(row);
     });
+  }
 
-    // Мой статус готовности — наглядно
-    const me = state.players.find(p => p.id === getMyId());
-    myReady = isHost || !!(me && me.ready);
-    updateReadyUI();
+  function makeBadge(text, cls) {
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + cls;
+    badge.textContent = text;
+    return badge;
+  }
+
+  function updateLocalSettingLabels() {
+    const maxPlayers = parseInt(document.getElementById('playerRange').value, 10);
+    const time = parseInt(document.getElementById('timeRange').value, 10);
+    const multi = document.getElementById('multiSpyToggle').checked;
+    setText('playerVal', maxPlayers);
+    setText('timeVal', time);
+    setText('spyModeTitle', multi ? 'Несколько шпионов' : 'Один шпион');
+    setText('spyModeText', multi ? 'Сервер рандомит число' : 'Оставить одного шпиона');
+    const currentPlayers = lastState ? lastState.players.length : maxPlayers;
+    const randomMax = Math.max(1, currentPlayers - 1);
+    setText('spyModeHint', multi ? 'При старте выпадет от 1 до ' + randomMax + ' шпионов. Точное число не видно игрокам.' : 'В игре будет один шпион.');
   }
 
   function sendSettings() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'settings', settings: {
-      maxPlayers: parseInt(document.getElementById('playerRange').value),
-      spies: parseInt(document.getElementById('spyRange').value),
-      time:  parseInt(document.getElementById('timeRange').value),
+      maxPlayers: parseInt(document.getElementById('playerRange').value, 10),
+      multipleSpies: document.getElementById('multiSpyToggle').checked,
+      time: parseInt(document.getElementById('timeRange').value, 10),
     }}));
   }
 
@@ -278,25 +502,71 @@
     const btn = document.getElementById('btnReady');
     const banner = document.getElementById('readyBanner');
     if (btn) {
-      btn.textContent = myReady ? '✅ Ты готов — нажми чтобы отменить' : '☐ Нажми «Готов»';
+      btn.textContent = myReady ? 'Готов — отменить' : 'Отметиться готовым';
       btn.classList.toggle('btn-ready-on', myReady);
     }
     if (banner) {
       banner.style.display = isHost ? 'none' : '';
       banner.className = 'ready-banner ' + (myReady ? 'on' : 'off');
-      banner.textContent = myReady ? '✅ Ты готов к игре' : '⏳ Ты ещё не готов';
+      banner.textContent = myReady ? 'Ты готов к игре' : 'Ты ещё не готов';
     }
+  }
+
+  function renderHeroGrid() {
+    const heroGrid = document.getElementById('heroGrid');
+    const stats = document.getElementById('heroStats');
+    if (!heroGrid || !stats) return;
+    const q = (document.getElementById('heroSearch')?.value || '').trim().toLowerCase();
+    heroGrid.innerHTML = '';
+    let shown = 0;
+    HEROES.forEach(h => {
+      if (q && !h.name.toLowerCase().includes(q)) return;
+      shown++;
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'hero-tile';
+      tile.title = h.name;
+      const img = document.createElement('img');
+      img.src = h.img;
+      img.loading = 'lazy';
+      img.alt = h.name;
+      const label = document.createElement('span');
+      label.className = 'h-name';
+      label.textContent = h.name;
+      tile.appendChild(img);
+      tile.appendChild(label);
+      tile.addEventListener('click', () => {
+        tile.classList.toggle('selected');
+      });
+      heroGrid.appendChild(tile);
+    });
+    stats.textContent = shown + ' из ' + HEROES.length;
+  }
+
+  function clearHeroDisabled() {
+    renderHeroGrid();
   }
 
   function toggleReady() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    myReady = !myReady; // оптимистично
+    myReady = !myReady;
     updateReadyUI();
     ws.send(JSON.stringify({ type: 'ready' }));
   }
 
-  function leaveLobby() {
-    if (!confirm('Выйти из лобби?')) return;
+  function startGame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    setText('errMsg', '');
+    ws.send(JSON.stringify({ type: 'start', heroes: HEROES, disabledHeroes: [] }));
+  }
+
+  async function leaveLobby() {
+    if (!(await appConfirm({
+      title: 'Выйти из лобби',
+      message: 'Ты покинешь текущую комнату и вернёшься на стартовый экран.',
+      okText: 'Выйти',
+      danger: true,
+    }))) return;
     try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'leave' })); } catch (e) {}
     clearInterval(syncTimer);
     if (connHandle) connHandle.stop();
@@ -306,10 +576,37 @@
     location.href = 'index.html';
   }
 
-  function startGame() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'start', heroes: HEROES, disabledHeroes: [...disabledHeroes] }));
+  async function kickPlayer(playerId, name) {
+    if (!isHost || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!(await appConfirm({
+      title: 'Кикнуть игрока',
+      message: 'Удалить "' + name + '" из лобби?',
+      okText: 'Кикнуть',
+      danger: true,
+    }))) return;
+    ws.send(JSON.stringify({ type: 'kick_player', playerId }));
   }
+
+  async function transferHost(playerId, name) {
+    if (!isHost || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!(await appConfirm({
+      title: 'Передать хост',
+      message: '"' + name + '" получит управление лобби, настройками и запуском игры.',
+      okText: 'Передать',
+    }))) return;
+    ws.send(JSON.stringify({ type: 'transfer_host', playerId }));
+  }
+
+  function copyRoomCode() {
+    const code = document.getElementById('roomCode').textContent.trim();
+    navigator.clipboard?.writeText(code).then(() => {
+      setText('errMsg', 'Код скопирован');
+      setTimeout(() => setText('errMsg', ''), 1400);
+    }).catch(() => setText('errMsg', code));
+  }
+
+  document.getElementById('heroSearch')?.addEventListener('input', renderHeroGrid);
+  window.addEventListener('load', connect);
 </script>
 </body>
 </html>

@@ -35,6 +35,13 @@
   let ws;
   let connecting = false;
 
+  function getClientId() {
+    let id = localStorage.getItem('dotaspy_client_id');
+    if (!id) { id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('dotaspy_client_id', id); }
+    return id;
+  }
+
+
   function setButtonsDisabled(disabled) {
     document.getElementById('btnCreate').disabled = disabled;
     document.getElementById('btnJoin').disabled = disabled;
@@ -75,7 +82,7 @@
   function createRoom() {
     const name = document.getElementById('nameInput').value.trim() || 'Хост';
     sessionStorage.setItem('dotaspy_name', name);
-    connect(socket => socket.send(JSON.stringify({ type: 'create', name })));
+    connect(socket => socket.send(JSON.stringify({ type: 'create', name, clientId: getClientId() })));
   }
 
   function joinRoom() {
@@ -83,7 +90,7 @@
     const code = document.getElementById('codeInput').value.trim().toUpperCase();
     if (!code) { document.getElementById('errMsg').textContent = 'Введи код комнаты'; return; }
     sessionStorage.setItem('dotaspy_name', name);
-    connect(socket => socket.send(JSON.stringify({ type: 'join', name, code })));
+    connect(socket => socket.send(JSON.stringify({ type: 'join', name, code, clientId: getClientId() })));
   }
 </script>
 </body>

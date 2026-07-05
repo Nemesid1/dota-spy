@@ -232,6 +232,15 @@ function handleDisconnect(roomCode, playerId) {
   broadcast(roomCode, roomState(roomCode));
 }
 
+function removeGhostsByClient(room, clientId, exceptId) {
+  if (!clientId) return;
+  const ghosts = room.players.filter(p => p.clientId === clientId && p.id !== exceptId);
+  ghosts.forEach(g => {
+    room.players = room.players.filter(p => p.id !== g.id);
+    if (room.reconnectGrace) delete room.reconnectGrace[g.id];
+  });
+}
+
 const wss = new WebSocketServer({ server });
 
 // Keepalive — мягкая проверка (не рвём соединение агрессивно)
@@ -262,7 +271,7 @@ wss.on('connection', ws => {
       myId   = 'p1';
       rooms[code] = {
         hostId: myId,
-        players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true }],
+        players: [{ id: myId, name: msg.name || 'Хост', ws, ready: true, clientId: msg.clientId }],
         settings: { spies: 1, time: 8, maxPlayers: 4 },
         started: false,
         reconnectGrace: {},
@@ -278,11 +287,22 @@ wss.on('connection', ws => {
       if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
       cleanGrace(room);
+      // Тот же браузер уже в комнате? Переиспользуем его слот (без дублей)
+      const sameClient = msg.clientId && room.players.find(p => p.clientId === msg.clientId);
+      if (sameClient) {
+        sameClient.ws = ws;
+        if (msg.name) sameClient.name = msg.name;
+        myRoom = code;
+        myId   = sameClient.id;
+        ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
+        broadcast(code, roomState(code));
+        return;
+      }
       const max = room.settings.maxPlayers || 12;
       if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
       myRoom = code;
       myId   = 'p' + (room.players.length + 1);
-      room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
+      room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
       ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
       broadcast(code, roomState(code));
     }
@@ -297,6 +317,7 @@ wss.on('connection', ws => {
       if (existing) {
         existing.ws = ws;
         if (msg.name) existing.name = msg.name;
+        if (msg.clientId) existing.clientId = msg.clientId;
         clearTimeout(room._emptyTimer);
         myRoom = code;
         myId   = existing.id;
@@ -313,9 +334,27 @@ wss.on('connection', ws => {
         if (room.started) sendGameStart(room, existing);
         broadcast(code, state);
       } else {
+        // Сессия/playerId потеряны, но это тот же браузер — переиспользуем слот
+        const sameClient = msg.clientId && room.players.find(p => p.clientId === msg.clientId);
+        if (sameClient) {
+          sameClient.ws = ws;
+          if (msg.name) sameClient.name = msg.name;
+          clearTimeout(room._emptyTimer);
+          myRoom = code;
+          myId   = sameClient.id;
+          const state = roomState(code);
+          ws.send(JSON.stringify({
+            type: 'rejoined', code, playerId: myId, roomState: state,
+            gameData: room.started ? (sameClient.gameAssignment || buildGameAssignment(room, sameClient, code)) : null,
+          }));
+          if (room.started) sendGameStart(room, sameClient);
+          broadcast(code, state);
+          return;
+        }
         const grace = room.reconnectGrace?.[msg.playerId];
         if (grace && Date.now() < grace.expiresAt) {
           delete room.reconnectGrace[msg.playerId];
+          removeGhostsByClient(room, msg.clientId);
           myRoom = code;
           myId   = msg.playerId;
           room.players.push({
@@ -323,6 +362,7 @@ wss.on('connection', ws => {
             name: msg.name || grace.name,
             ws,
             ready: grace.ready,
+            clientId: msg.clientId,
           });
           if (grace.wasHost) room.hostId = myId;
           clearTimeout(room._emptyTimer);
@@ -333,11 +373,12 @@ wss.on('connection', ws => {
         } else {
           if (grace) delete room.reconnectGrace[msg.playerId];
           if (room.started) { ws.send(JSON.stringify({ type: 'error', text: 'Игра уже началась' })); return; }
+          removeGhostsByClient(room, msg.clientId);
           const max = room.settings.maxPlayers || 12;
           if (room.players.length >= max) { ws.send(JSON.stringify({ type: 'error', text: `Комната заполнена (${max} игроков)` })); return; }
           myRoom = code;
           myId   = 'p' + (room.players.length + 1);
-          room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false });
+          room.players.push({ id: myId, name: msg.name || `Игрок ${room.players.length + 1}`, ws, ready: false, clientId: msg.clientId });
           ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
           broadcast(code, roomState(code));
         }
@@ -348,6 +389,20 @@ wss.on('connection', ws => {
     else if (msg.type === 'sync') {
       const room = rooms[myRoom];
       if (room) ws.send(JSON.stringify(roomState(myRoom)));
+    }
+
+    // ── leave room (выход без закрытия сайта)
+    else if (msg.type === 'leave') {
+      const room = rooms[myRoom];
+      if (room) {
+        const p = room.players.find(x => x.id === myId);
+        if (p) p.ws = null;
+        if (room.reconnectGrace) delete room.reconnectGrace[myId];
+        removePlayerImmediate(myRoom, myId, { allowRejoin: false });
+      }
+      try { ws.send(JSON.stringify({ type: 'left' })); } catch {}
+      myRoom = null;
+      myId   = null;
     }
 
     // ── update settings (host only)

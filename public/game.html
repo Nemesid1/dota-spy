@@ -126,6 +126,16 @@ let iHaveVoted = false;
 const crossedHeroes = new Set(initialSpyNotes);
 let crossedMode = false;
 
+// Группы героев по атрибутам + режим угадывания (объявлено до initGameUI!)
+const ATTR_GROUPS = [
+  { key: 'str', label: 'Сила',      cls: 'attr-str' },
+  { key: 'agi', label: 'Ловкость',  cls: 'attr-agi' },
+  { key: 'int', label: 'Интеллект', cls: 'attr-int' },
+  { key: 'all', label: 'Универсал', cls: 'attr-all' },
+];
+let guessMode = false;
+
+
 // ── Players vote list
 function renderVotePlayers() {
   if (!players) return;
@@ -187,14 +197,6 @@ if (gameData) {
 }
 
 // ── Spy notes functions
-const ATTR_GROUPS = [
-  { key: 'str', label: 'Сила',      cls: 'attr-str' },
-  { key: 'agi', label: 'Ловкость',  cls: 'attr-agi' },
-  { key: 'int', label: 'Интеллект', cls: 'attr-int' },
-  { key: 'all', label: 'Универсал', cls: 'attr-all' },
-];
-let guessMode = false;
-
 function initSpyNotes() {
   const board = document.getElementById('heroBoard');
   board.innerHTML = '';
@@ -356,7 +358,7 @@ function connect() {
       const code = sessionStorage.getItem('dotaspy_code');
       const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
-      ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId }));
+      ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId, clientId: (function(){let i=localStorage.getItem('dotaspy_client_id'); if(!i){i='c_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('dotaspy_client_id',i);} return i;})() }));
 
       if (role === 'spy' && crossedHeroes.size > 0) {
         setTimeout(() => {

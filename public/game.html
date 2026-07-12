@@ -12,6 +12,12 @@
     .result-scores .score-row strong{color:#e8a838}
     .hint-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-20px);background:#1b2430;border:1px solid #e8a838;color:#e8a838;padding:10px 18px;border-radius:20px;font-weight:700;font-size:.85rem;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:200}
     .hint-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .vote-player-item{display:inline-flex;align-items:stretch;margin:3px}
+    .vote-player-item .vote-player-btn{margin:0;border-top-right-radius:0;border-bottom-right-radius:0}
+    .vote-mark-btn{border:1px solid #30363d;border-left:none;background:#161b22;color:#8b949e;border-radius:0 8px 8px 0;padding:0 10px;cursor:pointer;font-weight:800}
+    .vote-mark-btn:hover{color:#3fbf6f;border-color:#3fbf6f}
+    .vote-mark-btn.on{color:#3fbf6f;border-color:#3fbf6f;background:#0f2b17}
+    .vote-player-item.cleared .vote-player-btn{opacity:.5;text-decoration:line-through}
     .badge.badge-score{background:#3a2d0a;color:#e8a838;border:1px solid #e8a838}
   </style>
 </head>
@@ -218,6 +224,8 @@ let voteActive = false;
 let iHaveVoted = false;
 
 const crossedHeroes = new Set(initialSpyNotes);
+const crossedPlayers = new Set(); // мирные локально отмечают тех, в ком уверены
+let stopReconnect = false;
 let crossedMode = false;
 
 const ATTR_GROUPS = [
@@ -235,13 +243,24 @@ function renderVotePlayers() {
   vp.innerHTML = '';
   players.forEach(p => {
     if (p.id === myId) return;
+    const cleared = crossedPlayers.has(p.id);
+    const item = document.createElement('div');
+    item.className = 'vote-player-item' + (cleared ? ' cleared' : '');
     const btn = document.createElement('button');
     btn.className = 'vote-player-btn' + (usedVote ? ' used' : '');
     btn.id = 'vpbtn-' + p.id;
     btn.textContent = p.name;
     btn.disabled = usedVote || voteActive;
     btn.onclick = () => startVote(p.id, p.name);
-    vp.appendChild(btn);
+    const mark = document.createElement('button');
+    mark.type = 'button';
+    mark.className = 'vote-mark-btn' + (cleared ? ' on' : '');
+    mark.title = cleared ? 'Вернуть в подозреваемые' : 'Отметить: вне подозрений';
+    mark.textContent = cleared ? '↺' : '✓';
+    mark.onclick = () => { if (crossedPlayers.has(p.id)) crossedPlayers.delete(p.id); else crossedPlayers.add(p.id); renderVotePlayers(); };
+    item.appendChild(btn);
+    item.appendChild(mark);
+    vp.appendChild(item);
   });
   const self = document.createElement('div');
   self.className = 'vote-player-btn self-badge';
@@ -389,6 +408,7 @@ function saveSpyNotes() {
 
 function handle(msg) {
   console.log('WebSocket message:', msg.type, msg);
+  if (msg.type === 'superseded') { onSuperseded(); return; }
   if (msg.type === 'rejoined') {
     if (msg.gameData) {
       sessionStorage.setItem('dotaspy_game', JSON.stringify(msg.gameData));
@@ -398,7 +418,7 @@ function handle(msg) {
     if (msg.roomState && !msg.roomState.started) { location.href = 'lobby.html'; return; }
     return;
   }
-  if (msg.type === 'timer') { remaining = msg.remaining; renderTimer(); }
+  if (msg.type === 'timer') { remaining = msg.remaining; if (typeof msg.running === 'boolean') running = msg.running; renderTimer(); updateTimerBtn(); }
   if (msg.type === 'room_state') {
     if (!msg.started) { location.href = 'lobby.html'; }
     else { if (msg.timer && msg.timer.remaining) { remaining = msg.timer.remaining; renderTimer(); } }
@@ -448,7 +468,6 @@ function connect() {
       const name = sessionStorage.getItem('dotaspy_name') || 'игрок';
       const playerId = sessionStorage.getItem('dotaspy_ws_id');
       ws.send(JSON.stringify({ type: 'rejoin', name, code, playerId, clientId: (function(){let i=localStorage.getItem('dotaspy_client_id'); if(!i){i='c_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('dotaspy_client_id',i);} return i;})() }));
-      if (isHost) startAutoTimer();
       if (role === 'spy' && crossedHeroes.size > 0) {
         setTimeout(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -459,6 +478,7 @@ function connect() {
     },
     onMessage: e => handle(JSON.parse(e.data)),
     onDisconnect: () => {
+      if (stopReconnect) return;
       updateConnectionStatus('disconnected', 'Переподключение...');
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++;
@@ -481,31 +501,26 @@ function renderTimer() {
   el.className = 'timer-display' + (remaining <= 30 ? ' red' : '');
 }
 
+function updateTimerBtn() {
+  const b = document.getElementById('btnStartStop');
+  if (b) b.textContent = running ? '⏸ Пауза' : '▶ Старт';
+}
+// Таймер идёт на сервере — кнопки только шлют команды хоста.
 function toggleTimer() {
-  if (running) {
-    clearInterval(iv); running = false;
-    document.getElementById('btnStartStop').textContent = '▶ Старт';
-  } else {
-    if (remaining <= 0) remaining = totalSec;
-    running = true;
-    document.getElementById('btnStartStop').textContent = '⏸ Пауза';
-    iv = setInterval(() => {
-      remaining = Math.max(0, remaining - 1);
-      renderTimer();
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'timer', remaining }));
-      if (remaining === 0) { clearInterval(iv); running = false; document.getElementById('btnStartStop').textContent = '▶ Старт'; }
-    }, 1000);
-  }
+  if (!isHost || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'timer_control', action: running ? 'pause' : 'resume' }));
 }
 function resetTimer() {
-  clearInterval(iv); running = false; remaining = totalSec; renderTimer();
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'timer', remaining }));
-  document.getElementById('btnStartStop').textContent = '▶ Старт';
+  if (!isHost || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'timer_control', action: 'reset' }));
 }
-
-function startAutoTimer() {
-  if (!isHost || running || remaining <= 0) return;
-  toggleTimer();
+function onSuperseded() {
+  stopReconnect = true;
+  try { if (ws) ws.close(); } catch (e) {}
+  const ov = document.getElementById('loadingOverlay');
+  if (ov) ov.style.display = 'flex';
+  const lt = document.querySelector('#loadingOverlay .loading-text');
+  if (lt) lt.textContent = 'Игра открыта в другой вкладке. Эта вкладка отключена.';
 }
 
 let revealed = false;

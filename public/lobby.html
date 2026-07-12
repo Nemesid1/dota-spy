@@ -284,6 +284,7 @@
   let myReady = false;
   let ws;
   let connHandle = null;
+  let stopReconnect = false;
   let hasConnectedOnce = false;
   let syncTimer = null;
   let lastState = null;
@@ -371,6 +372,7 @@
       onMessage: e => handle(JSON.parse(e.data)),
       onDisconnect: () => {
         clearInterval(syncTimer);
+        if (stopReconnect) return;
         updateConnectionStatus('disconnected', 'Переподключение...');
         setTimeout(connect, 1500);
       },
@@ -378,6 +380,14 @@
   }
 
   function handle(msg) {
+    if (msg.type === 'superseded') {
+      stopReconnect = true;
+      clearInterval(syncTimer);
+      if (connHandle) connHandle.stop();
+      sessionStorage.setItem('dotaspy_notice', 'Лобби открыто в другой вкладке.');
+      location.href = 'index.html';
+      return;
+    }
     if (msg.type === 'left') { location.href = 'index.html'; return; }
     if (msg.type === 'kicked') {
       sessionStorage.removeItem('dotaspy_ws_id');
@@ -387,7 +397,17 @@
       location.href = 'index.html';
       return;
     }
-    if (msg.type === 'error') { setText('errMsg', msg.text); return; }
+    if (msg.type === 'error') {
+      setText('errMsg', msg.text);
+      if (/не найдена|уже началась/i.test(msg.text)) {
+        stopReconnect = true;
+        clearInterval(syncTimer);
+        if (connHandle) connHandle.stop();
+        sessionStorage.setItem('dotaspy_notice', msg.text);
+        setTimeout(() => location.href = 'index.html', 1400);
+      }
+      return;
+    }
     if (msg.type === 'joined') {
       sessionStorage.setItem('dotaspy_ws_id', msg.playerId);
       if (msg.roomState) renderLobby(msg.roomState);

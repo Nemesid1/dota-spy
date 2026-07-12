@@ -44,6 +44,13 @@ function shuffle(arr) {
   }
   return a;
 }
+// Закрыть старый сокет того же игрока (вторая вкладка/устройство), чтобы не было двух «в лобби».
+function supersedeSocket(oldWs, newWs) {
+  if (oldWs && oldWs !== newWs && oldWs.readyState === 1) {
+    try { oldWs.send(JSON.stringify({ type: 'superseded' })); } catch (e) {}
+    try { oldWs.close(4001, 'superseded'); } catch (e) {}
+  }
+}
 function makePlayerId(room) {
   const used = new Set(room.players.map(p => p.id));
   let n = 1;
@@ -272,6 +279,7 @@ function checkVoteResult(roomCode) {
 
 const ROOM_EMPTY_TIMEOUT = 10 * 60 * 1000;
 const RECONNECT_GRACE = 12000; // 12 сек — только для F5 / перезагрузки, слот сразу свободен
+const HOST_RECONNECT_GRACE = 30000; // хосту даём больше времени вернуться, прежде чем передать роль
 
 function activePlayers(room) {
   return room.players.filter(p => p.ws && p.ws.readyState === 1);
@@ -378,6 +386,20 @@ function handleDisconnect(roomCode, playerId) {
   }
 
   if (!room.started) {
+    // Хоста не убираем и не передаём сразу — даём время вернуться (F5 / короткий обрыв связи)
+    if (playerId === room.hostId) {
+      broadcast(roomCode, roomState(roomCode));
+      clearTimeout(room._hostGraceTimer);
+      room._hostGraceTimer = setTimeout(() => {
+        const r = rooms[roomCode];
+        if (!r) return;
+        const host = r.players.find(p => p.id === playerId);
+        if (host && !(host.ws && host.ws.readyState === 1)) {
+          removePlayerImmediate(roomCode, playerId, { allowRejoin: true });
+        }
+      }, HOST_RECONNECT_GRACE);
+      return;
+    }
     removePlayerImmediate(roomCode, playerId, { allowRejoin: true });
     return;
   }
@@ -405,6 +427,21 @@ const pingInterval = setInterval(() => {
   });
 }, 45000);
 wss.on('close', () => clearInterval(pingInterval));
+
+// Авторитетный серверный таймер: тикаем все активные комнаты (не зависим от клиента хоста)
+const timerInterval = setInterval(() => {
+  for (const code of Object.keys(rooms)) {
+    const room = rooms[code];
+    if (!room || !room.started || room.finished || !room.timer || !room.timer.running) continue;
+    if (room.timer.remaining <= 0) { handleTimeout(room, code); continue; }
+    room.timer.remaining = Math.max(0, room.timer.remaining - 1);
+    room.timer.updatedAt = Date.now();
+    broadcast(code, { type: 'timer', remaining: room.timer.remaining, running: true });
+    processHints(room, code);
+    handleTimeout(room, code);
+  }
+}, 1000);
+wss.on('close', () => clearInterval(timerInterval));
 
 wss.on('connection', ws => {
   ws.isAlive = true;
@@ -443,8 +480,10 @@ wss.on('connection', ws => {
       // Тот же браузер уже в комнате? Переиспользуем его слот (без дублей)
       const sameClient = msg.clientId && room.players.find(p => p.clientId === msg.clientId);
       if (sameClient) {
+        supersedeSocket(sameClient.ws, ws);
         sameClient.ws = ws;
         if (msg.name) sameClient.name = msg.name;
+        clearTimeout(room._hostGraceTimer);
         myRoom = code;
         myId   = sameClient.id;
         ws.send(JSON.stringify({ type: 'joined', code, playerId: myId, roomState: roomState(code) }));
@@ -466,12 +505,16 @@ wss.on('connection', ws => {
       const room = rooms[code];
       if (!room) { ws.send(JSON.stringify({ type: 'error', text: 'Комната не найдена. Попросите хоста создать новую комнату и держать лобби открытым.' })); return; }
       cleanGrace(room);
-      const existing = room.players.find(p => p.id === msg.playerId);
+      const existingById = room.players.find(p => p.id === msg.playerId);
+      // Не перехватываем чужой слот при совпадении playerId, но разном clientId
+      const existing = (existingById && (!existingById.clientId || !msg.clientId || existingById.clientId === msg.clientId)) ? existingById : null;
       if (existing) {
+        supersedeSocket(existing.ws, ws);
         existing.ws = ws;
         if (msg.name) existing.name = msg.name;
         if (msg.clientId) existing.clientId = msg.clientId;
         clearTimeout(room._emptyTimer);
+        clearTimeout(room._hostGraceTimer);
         myRoom = code;
         myId   = existing.id;
 
@@ -490,9 +533,11 @@ wss.on('connection', ws => {
         // Сессия/playerId потеряны, но это тот же браузер — переиспользуем слот
         const sameClient = msg.clientId && room.players.find(p => p.clientId === msg.clientId);
         if (sameClient) {
+          supersedeSocket(sameClient.ws, ws);
           sameClient.ws = ws;
           if (msg.name) sameClient.name = msg.name;
           clearTimeout(room._emptyTimer);
+          clearTimeout(room._hostGraceTimer);
           myRoom = code;
           myId   = sameClient.id;
           const state = roomState(code);
@@ -508,8 +553,9 @@ wss.on('connection', ws => {
         if (grace && Date.now() < grace.expiresAt) {
           delete room.reconnectGrace[msg.playerId];
           removeGhostsByClient(room, msg.clientId);
+          clearTimeout(room._hostGraceTimer);
           myRoom = code;
-          myId   = msg.playerId;
+          myId   = room.players.some(p => p.id === msg.playerId) ? makePlayerId(room) : msg.playerId;
           room.players.push({
             id: myId,
             name: msg.name || grace.name,
@@ -652,7 +698,7 @@ wss.on('connection', ws => {
       room.started = true;
       room.finished = false;
       room.pendingRedemption = null;
-      room.timer = { remaining: room.settings.time * 60, updatedAt: Date.now() };
+      room.timer = { remaining: room.settings.time * 60, running: true, updatedAt: Date.now() };
       // Рандомная очередь разговора на эту игру
       room.speakingOrder = shuffle(room.players.map(p => p.id));
       room.players.forEach(p => {
@@ -664,15 +710,16 @@ wss.on('connection', ws => {
       room.vote = null;
     }
 
-    // ── timer sync (host broadcasts to all)
-    else if (msg.type === 'timer') {
+    // ── timer control (host: pause/resume/reset). Тикает сам сервер.
+    else if (msg.type === 'timer_control') {
       const room = rooms[myRoom];
-      if (room) {
-        room.timer = { remaining: msg.remaining, updatedAt: Date.now() };
-        processHints(room, myRoom);
-        handleTimeout(room, myRoom);
-      }
-      broadcast(myRoom, { type: 'timer', remaining: msg.remaining });
+      if (!room || room.hostId !== myId || !room.started) return;
+      if (!room.timer) room.timer = { remaining: room.settings.time * 60, running: false, updatedAt: Date.now() };
+      if (msg.action === 'pause') room.timer.running = false;
+      else if (msg.action === 'resume') { if (room.timer.remaining > 0) room.timer.running = true; }
+      else if (msg.action === 'reset') { room.timer.remaining = room.settings.time * 60; room.timer.running = false; }
+      room.timer.updatedAt = Date.now();
+      broadcast(myRoom, { type: 'timer', remaining: room.timer.remaining, running: room.timer.running });
     }
 
     // ── start vote

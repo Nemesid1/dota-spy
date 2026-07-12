@@ -4,6 +4,11 @@
   <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Дота-Шпион</title>
   <link rel="stylesheet" href="style.css"/>
+  <style>
+    .join-hint{margin-top:10px;font-size:.8rem;color:#8b949e;text-align:center}
+    .home-join-card .code-input{letter-spacing:6px;font-weight:800;text-align:center;text-transform:uppercase;font-size:1.2rem}
+    .home-status{min-height:18px}
+  </style>
 </head>
 <body class="home-body">
 <main class="page home-page">
@@ -23,8 +28,8 @@
 
         <section class="home-auth">
           <article class="home-card home-card-primary">
-            <div class="card-kicker">Комната</div>
-            <h1>Собрать лобби</h1>
+            <div class="card-kicker">Новая игра</div>
+            <h1>Создать лобби</h1>
             <div class="field">
               <label for="nameInput">Твоё имя</label>
               <input type="text" id="nameInput" placeholder="Введи имя" maxlength="20"/>
@@ -38,18 +43,23 @@
           </article>
 
           <article class="home-card home-join-card">
-            <div class="card-kicker">Вход</div>
-            <h2>Присоединиться</h2>
+            <div class="card-kicker">Вход по коду</div>
+            <h2>Присоединиться к лобби</h2>
             <div class="field">
-              <label for="codeInput">Код комнаты</label>
-              <input type="text" id="codeInput" class="code-input" placeholder="XXXX" maxlength="4"/>
+              <label for="nameInputJoin">Твоё имя</label>
+              <input type="text" id="nameInputJoin" placeholder="Введи имя" maxlength="20"/>
             </div>
-            <button class="btn btn-secondary btn-large" id="btnJoin" onclick="joinRoom()">
+            <div class="field">
+              <label for="codeInput">Код комнаты от хоста</label>
+              <input type="text" id="codeInput" class="code-input" placeholder="XXXX" maxlength="4" autocomplete="off" inputmode="latin"/>
+            </div>
+            <button class="btn btn-primary btn-large" id="btnJoin" onclick="joinRoom()">
               <span class="btn-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M10 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7v-2h7V7h-7V5Zm1.4 3.6L15 12l-3.6 3.4-1.4-1.45L11.6 13H4v-2h7.6L10 10.05l1.4-1.45Z"/></svg>
               </span>
               Войти в комнату
             </button>
+            <p class="join-hint">Спроси у хоста 4-буквенный код и введи его здесь.</p>
           </article>
         </section>
 
@@ -138,18 +148,27 @@
 
   function createRoom() {
     const name = document.getElementById('nameInput').value.trim() || 'Хост';
+    document.getElementById('errMsg').textContent = '';
+    document.getElementById('statusMsg').textContent = 'Создаём комнату…';
     sessionStorage.setItem('dotaspy_name', name);
     connect(socket => socket.send(JSON.stringify({ type: 'create', name, clientId: getClientId() })));
   }
 
   function joinRoom() {
-    const name = document.getElementById('nameInput').value.trim() || 'Игрок';
+    const name = (document.getElementById('nameInputJoin').value.trim() || document.getElementById('nameInput').value.trim()) || 'Игрок';
     const code = document.getElementById('codeInput').value.trim().toUpperCase();
-    if (!code) { document.getElementById('errMsg').textContent = 'Введи код комнаты'; return; }
+    if (code.length < 4) { document.getElementById('errMsg').textContent = 'Введи 4-буквенный код комнаты от хоста'; document.getElementById('codeInput').focus(); return; }
+    document.getElementById('errMsg').textContent = '';
+    document.getElementById('statusMsg').textContent = 'Подключаемся к комнате…';
     sessionStorage.setItem('dotaspy_name', name);
     connect(socket => socket.send(JSON.stringify({ type: 'join', name, code, clientId: getClientId() })));
   }
 
+  const codeEl = document.getElementById('codeInput');
+  codeEl.addEventListener('input', () => { codeEl.value = codeEl.value.toUpperCase(); });
+  codeEl.addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
+  document.getElementById('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') createRoom(); });
+  document.getElementById('nameInputJoin').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('codeInput').focus(); });
   window.addEventListener('load', showNotice);
 </script>
 </body>
